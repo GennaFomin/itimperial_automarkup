@@ -35,7 +35,9 @@ class Vocabulary(BaseModel):
         if not self.has_action(action):
             return False
         if obj is None:
-            return self.pairs is None
+            # Объект ещё не определён — это незаполненное поле, а не нарушение словаря.
+            # Пайплайн отдаёт пустой объект, пока до сегмента не дошла семантическая стадия.
+            return True
         if not self.has_object(obj):
             return False
         if self.pairs is None:

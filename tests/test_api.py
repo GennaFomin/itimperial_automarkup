@@ -46,8 +46,23 @@ def videos(tmp_path_factory) -> dict[str, Path]:
 
 @pytest.fixture
 def client(tmp_path, monkeypatch) -> TestClient:
+    """Клиент с заглушкой сегментатора: эти тесты про HTTP-цикл, а не про качество нарезки.
+
+    Настоящий сегментатор на синтетическом ролике честно отдаёт один шаг — резать там
+    нечего, — поэтому проверять на нём правку границ бессмысленно.
+    """
     monkeypatch.setattr(config, "WORK_DIR", tmp_path / "work")
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "work" / "praxis.db")
+    monkeypatch.setattr(config, "PIPELINE", "stub")
+    with TestClient(app=_app()) as test_client:
+        yield test_client
+
+
+@pytest.fixture
+def real_pipeline_client(tmp_path, monkeypatch) -> TestClient:
+    monkeypatch.setattr(config, "WORK_DIR", tmp_path / "work")
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "work" / "praxis.db")
+    monkeypatch.setattr(config, "PIPELINE", "motion-dp")
     with TestClient(app=_app()) as test_client:
         yield test_client
 
@@ -142,3 +157,26 @@ def test_vocabulary_is_served_for_dropdowns(client):
 def test_store_survives_restart(client, videos, monkeypatch):
     video_id = upload(client, videos["ok"]).json()["id"]
     assert store.get_video(video_id)["status"] == "done"
+
+
+def test_real_pipeline_produces_valid_tiling(real_pipeline_client, videos):
+    """Настоящий сегментатор обязан покрыть таймлайн без дыр и без пустой разметки."""
+    video_id = upload(real_pipeline_client, videos["ok"]).json()["id"]
+    record = real_pipeline_client.get(f"/api/videos/{video_id}").json()
+    assert record["status"] == "done", record["error"]
+
+    payload = real_pipeline_client.get(f"/api/videos/{video_id}/annotation").json()
+    annotation = Annotation.model_validate(payload["annotation"])
+
+    assert annotation.provenance.pipeline == "motion-dp"
+    assert len(annotation.steps) >= 1, "пустая разметка недопустима ни при каких входных данных"
+    assert len(annotation.steps) <= config.MAX_SEGMENTS
+
+    steps = sorted(annotation.steps, key=lambda step: step.start_sec)
+    assert steps[0].start_sec == 0.0
+    assert steps[-1].end_sec == pytest.approx(record["duration_sec"], abs=0.05)
+    for left, right in zip(steps, steps[1:]):
+        assert left.end_sec == pytest.approx(right.start_sec, abs=0.001), "между шагами дыра"
+    for step in steps:
+        assert step.keyframe_sec is not None
+        assert step.start_sec <= step.keyframe_sec <= step.end_sec

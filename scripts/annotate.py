@@ -31,16 +31,22 @@ def main() -> None:
         raise SystemExit(f"в {args.source} нет роликов")
 
     durations: list[float] = []
+    failed: list[str] = []
     for clip in clips:
         started = time.perf_counter()
-        probed = media.probe(clip)
-        meta = VideoMeta(
-            id=clip.stem,
-            filename=clip.name,
-            **{k: probed[k] for k in ("duration_sec", "fps", "width", "height")},
-        )
-        motion = media.motion_signal(clip)
-        annotation = jobs.annotate_clip(clip, meta, motion, started)
+        try:
+            probed = media.probe(clip)
+            meta = VideoMeta(
+                id=clip.stem,
+                filename=clip.name,
+                **{k: probed[k] for k in ("duration_sec", "fps", "width", "height")},
+            )
+            annotation = jobs.annotate_clip(clip, meta, jobs.perceive(clip), started)
+        except Exception as error:  # noqa: BLE001 — один битый файл не должен ронять прогон
+            failed.append(f"{clip.name}: {error}")
+            print(f"{clip.name}: ПРОПУЩЕН ({error})")
+            continue
+
         (args.target / f"{clip.stem}.json").write_text(
             annotation.model_dump_json(indent=2), encoding="utf-8"
         )
@@ -48,10 +54,14 @@ def main() -> None:
         durations.append(elapsed)
         print(f"{clip.name}: {len(annotation.steps)} шагов, {elapsed:.2f} с")
 
-    print(
-        f"\nроликов: {len(clips)}, среднее {sum(durations) / len(durations):.2f} с, "
-        f"максимум {max(durations):.2f} с (предел кейса — 120 с)"
-    )
+    if failed:
+        print(f"\nне обработано: {len(failed)}")
+
+    if durations:
+        print(
+            f"\nроликов: {len(durations)}, среднее {sum(durations) / len(durations):.2f} с, "
+            f"максимум {max(durations):.2f} с (предел кейса — 120 с)"
+        )
 
 
 if __name__ == "__main__":

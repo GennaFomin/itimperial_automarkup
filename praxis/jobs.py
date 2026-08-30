@@ -8,19 +8,32 @@ import traceback
 from pathlib import Path
 
 from praxis import config, media, store
-from praxis.pipeline.base import get_segmenter
+from praxis.pipeline.base import Perception, get_segmenter
 from praxis.schema import Annotation, Provenance, VideoMeta
 from praxis.vocab import load_vocabulary
 
 
+def perceive(source: Path) -> Perception:
+    """Один проход по кадрам: и полоса движения для таймлайна, и признаки для нарезки."""
+    frames = media.gray_frames(source)
+    # Пробовали добавлять сюда карту движения по блокам — на валидационном наборе стало
+    # хуже (F1@0.5 0.605 против 0.693): сто сорок четыре шумных измерения тянут разрезы
+    # на шум. Оставлен только вид кадра.
+    return Perception(
+        fps=float(config.MOTION_FPS),
+        motion=media.motion_from_frames(frames),
+        appearance=media.appearance_from_frames(frames),
+    )
+
+
 def annotate_clip(
-    source: Path, meta: VideoMeta, motion: list[float], started: float | None = None
+    source: Path, meta: VideoMeta, perception: Perception, started: float | None = None
 ) -> Annotation:
     """Ядро разметки без веб-обвязки: используется и фоновой задачей, и пакетным прогоном."""
     started = time.perf_counter() if started is None else started
     vocabulary = load_vocabulary(config.VOCAB_PATH)
     segmenter = get_segmenter(config.PIPELINE)
-    result = segmenter.run(source, meta, vocabulary, motion)
+    result = segmenter.run(source, meta, vocabulary, perception)
 
     return Annotation(
         video=meta,
@@ -56,10 +69,11 @@ def process_video(video_id: str) -> None:
             height=record["height"],
         )
 
-        motion = media.motion_signal(source)
+        perception = perceive(source)
+        motion = [round(float(value), 4) for value in perception.motion]
         strip = media.filmstrip(source, meta.duration_sec, directory / "strip")
 
-        annotation = annotate_clip(source, meta, motion, started)
+        annotation = annotate_clip(source, meta, perception, started)
         elapsed = annotation.provenance.processing_sec
 
         store.update_video(

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from praxis.pipeline.base import PipelineResult
+from praxis.pipeline.base import Perception, PipelineResult
 from praxis.schema import Source, Step, VideoMeta
 from praxis.vocab import Vocabulary
 
@@ -24,7 +24,7 @@ class StubSegmenter:
         video_path: Path,
         meta: VideoMeta,
         vocabulary: Vocabulary,
-        motion: list[float],
+        perception: Perception,
     ) -> PipelineResult:
         count = max(2, min(5, round(meta.duration_sec / 6)))
         span = meta.duration_sec / count

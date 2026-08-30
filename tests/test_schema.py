@@ -141,3 +141,14 @@ def test_verified_flag_survives_roundtrip_and_can_be_hidden():
 
     # Старый CSV без колонки читается по-прежнему.
     assert steps_from_csv(hidden_csv)[0].verified is False
+
+
+def test_missing_object_is_not_a_vocabulary_violation():
+    """Пустой объект — незаполненное поле, а не нарушение словаря.
+
+    Сегментатор отдаёт шаги без объекта, пока до них не дошла семантическая стадия;
+    подсвечивать это как ошибку словаря было бы неверно.
+    """
+    vocab = load_vocabulary()
+    assert vocab.is_valid_pair("attach", None)
+    assert check_annotation(annotation(step(0, 0.0, 5.0, object=None)), vocab) == []

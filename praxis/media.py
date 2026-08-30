@@ -117,15 +117,14 @@ def filmstrip(
     return sorted(path.name for path in out_dir.glob("strip_*.jpg"))
 
 
-def motion_signal(video: Path, fps: int | None = None) -> list[float]:
-    """Насколько сильно меняется картинка во времени, 0..1.
+def gray_frames(video: Path, fps: int | None = None, width: int = 64, height: int = 36) -> np.ndarray:
+    """Кадры ролика в оттенках серого как матрица (кадры, высота, ширина).
 
-    Считается по крошечным серым кадрам: это дёшево, устойчиво к шуму и даёт редактору
-    полосу, на которой видно, где вообще происходит движение. Позже тот же сигнал
-    станет одним из входов сегментатора.
+    Один проход ffmpeg на всё: из этих кадров считаются и сигнал движения для таймлайна,
+    и признаки внешнего вида для сегментатора. Разрешение намеренно крошечное — нас
+    интересует, что происходит в кадре в целом, а не детали.
     """
     fps = fps or config.MOTION_FPS
-    width, height = 64, 36
     result = _run(
         [
             "ffmpeg",
@@ -140,14 +139,54 @@ def motion_signal(video: Path, fps: int | None = None) -> list[float]:
             "-",
         ]
     )
-    frames = np.frombuffer(result.stdout, dtype=np.uint8)
-    count = frames.size // (width * height)
-    if count < 2:
-        return []
-    frames = frames[: count * width * height].reshape(count, height * width).astype(np.float32)
+    raw = np.frombuffer(result.stdout, dtype=np.uint8)
+    count = raw.size // (width * height)
+    if count < 1:
+        return np.zeros((0, height, width), dtype=np.float32)
+    return raw[: count * width * height].reshape(count, height, width).astype(np.float32)
 
-    diff = np.abs(np.diff(frames, axis=0)).mean(axis=1)
+
+def motion_from_frames(frames: np.ndarray) -> np.ndarray:
+    """Насколько сильно меняется картинка от кадра к кадру, нормировано в 0..1."""
+    if len(frames) < 2:
+        return np.zeros(len(frames), dtype=np.float32)
+    flat = frames.reshape(len(frames), -1)
+    diff = np.abs(np.diff(flat, axis=0)).mean(axis=1)
     diff = np.concatenate([diff[:1], diff])  # выравниваем длину с числом кадров
     peak = float(diff.max())
-    normalised = diff / peak if peak > 0 else diff
-    return [round(float(value), 4) for value in normalised]
+    return (diff / peak if peak > 0 else diff).astype(np.float32)
+
+
+def _pool(frames: np.ndarray, blocks: tuple[int, int]) -> np.ndarray:
+    """Усреднение по блокам: (кадры, высота, ширина) → (кадры, блоки)."""
+    if len(frames) == 0:
+        return np.zeros((0, blocks[0] * blocks[1]), dtype=np.float32)
+    count, height, width = frames.shape
+    rows, columns = blocks
+    trimmed = frames[:, : height - height % rows, : width - width % columns]
+    grid = trimmed.reshape(count, rows, (height - height % rows) // rows, columns, -1)
+    return grid.mean(axis=(2, 4)).reshape(count, rows * columns)
+
+
+def appearance_from_frames(frames: np.ndarray, blocks: tuple[int, int] = (9, 16)) -> np.ndarray:
+    """Огрублённый вид кадра: усреднение по блокам. Устойчиво к шуму и дрожанию камеры."""
+    return _pool(frames, blocks)
+
+
+def motion_field_from_frames(frames: np.ndarray, blocks: tuple[int, int] = (9, 16)) -> np.ndarray:
+    """Карта движения по блокам: где именно в кадре происходит активность.
+
+    Между шагами меняется не столько сама картинка, сколько место действия: руки уходят
+    от кучи деталей к собираемому узлу. Один лишь общий уровень движения этого не видит.
+    """
+    if len(frames) < 2:
+        return np.zeros((len(frames), blocks[0] * blocks[1]), dtype=np.float32)
+    difference = np.abs(np.diff(frames, axis=0))
+    difference = np.concatenate([difference[:1], difference])
+    return _pool(difference, blocks)
+
+
+def motion_signal(video: Path, fps: int | None = None) -> list[float]:
+    """Сигнал движения для полосы под таймлайном."""
+    frames = gray_frames(video, fps)
+    return [round(float(value), 4) for value in motion_from_frames(frames)]
