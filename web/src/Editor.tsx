@@ -8,9 +8,13 @@ import {
   deleteStep,
   mergeWithNext,
   moveBoundary,
+  nextUnverified,
+  setVerified,
   sortSteps,
   splitStep,
   updateStep,
+  verifiedCount,
+  verifyAll,
   withSteps,
 } from './steps'
 import type { Step, VideoRecord, Vocabulary } from './types'
@@ -75,6 +79,7 @@ function EditorBody({ record, onBack }: { record: VideoRecord; onBack: () => voi
   )
 
   const steps = annotation ? sortSteps(annotation.steps) : []
+  const checked = verifiedCount(steps)
 
   useEffect(() => {
     if (selectedId === null && steps.length) setSelectedId(steps[0].id)
@@ -137,6 +142,37 @@ function EditorBody({ record, onBack }: { record: VideoRecord; onBack: () => voi
     [mutateSteps, currentTime],
   )
 
+  const onVerify = useCallback(
+    (id: number, verified: boolean) => mutateSteps((all) => setVerified(all, id, verified)),
+    [mutateSteps],
+  )
+
+  const onVerifyAll = useCallback(() => mutateSteps((all) => verifyAll(all)), [mutateSteps])
+
+  /** Перейти к следующему непроверенному шагу и встать плеером на его начало. */
+  const goToNextUnverified = useCallback(() => {
+    const target = nextUnverified(steps, selectedId)
+    if (!target) return
+    setSelectedId(target.id)
+    seek(target.start_sec)
+  }, [steps, selectedId, seek])
+
+  /** Разбор ролика: подтвердить текущий шаг и сразу прыгнуть на следующий непроверенный. */
+  const verifyAndAdvance = useCallback(() => {
+    if (selectedId === null) return
+    const current = steps.find((step) => step.id === selectedId)
+    if (current?.verified) {
+      onVerify(selectedId, false)
+      return
+    }
+    onVerify(selectedId, true)
+    const target = nextUnverified(steps, selectedId)
+    if (target && target.id !== selectedId) {
+      setSelectedId(target.id)
+      seek(target.start_sec)
+    }
+  }, [selectedId, steps, onVerify, seek])
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement
@@ -169,6 +205,11 @@ function EditorBody({ record, onBack }: { record: VideoRecord; onBack: () => voi
         seek(steps[next].start_sec)
         return
       }
+      if (event.key === 'Tab') {
+        event.preventDefault()
+        goToNextUnverified()
+        return
+      }
       if (event.ctrlKey && event.key.toLowerCase() === 'z') {
         event.preventDefault()
         event.shiftKey ? redo() : undo()
@@ -191,6 +232,9 @@ function EditorBody({ record, onBack }: { record: VideoRecord; onBack: () => voi
           break
         case 'k':
           onKeyframeHere(selectedId)
+          break
+        case 'v':
+          verifyAndAdvance()
           break
         case 'delete':
         case 'backspace':
@@ -215,6 +259,8 @@ function EditorBody({ record, onBack }: { record: VideoRecord; onBack: () => voi
     onMerge,
     onDelete,
     onKeyframeHere,
+    goToNextUnverified,
+    verifyAndAdvance,
   ])
 
   const onExport = (format: 'json' | 'csv') => {
@@ -232,6 +278,12 @@ function EditorBody({ record, onBack }: { record: VideoRecord; onBack: () => voi
           {record.fps.toFixed(0)} fps
         </span>
         <span className="grow" />
+        <span className={`progress ${checked === steps.length && steps.length ? 'done' : ''}`}>
+          проверено {checked} из {steps.length}
+        </span>
+        <button onClick={onVerifyAll} disabled={checked === steps.length} title="Подтвердить все оставшиеся шаги">
+          подтвердить остальные
+        </button>
         <span className="muted">проверка: {formatTime(seconds)}</span>
         <span className="muted">правок: {editCount}</span>
         <button onClick={undo} disabled={!history.undo}>
@@ -280,8 +332,8 @@ function EditorBody({ record, onBack }: { record: VideoRecord; onBack: () => voi
           )}
           <div className="hints">
             space — играть · ←/→ — кадр (shift — секунда) · ↑/↓ — шаг · [ и ] — границы шага ·
-            S — разделить · M — слить · K — ключевой кадр · Del — удалить · Alt при перетаскивании
-            отключает магнит
+            V — проверено и дальше · Tab — следующий непроверенный · S — разделить · M — слить ·
+            K — ключевой кадр · Del — удалить · Alt при перетаскивании отключает магнит
           </div>
           {annotation && (
             <div className="provenance">
@@ -306,6 +358,7 @@ function EditorBody({ record, onBack }: { record: VideoRecord; onBack: () => voi
               onMerge={onMerge}
               onDelete={onDelete}
               onKeyframeHere={onKeyframeHere}
+              onVerify={onVerify}
             />
           )}
         </aside>

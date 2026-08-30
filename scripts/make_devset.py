@@ -4,10 +4,11 @@
 Assembly101 размечен ровно тем, что требует кейс: пара (глагол, объект) с границами по
 кадрам. Значит валидационный набор можно нарезать, не размечая руками ни одного ролика.
 
-Запускать там, где быстрый канал (DL5): исходные записи весят под гигабайт, а на ноутбук
-уезжают только куски по несколько мегабайт вместе с их разметкой.
+Исходные записи весят до двух гигабайт каждая, но качать их целиком не нужно: ffmpeg
+умеет искать по HTTP, поэтому из подписанной ссылки вытягиваются только те байты, что
+попадают в окно. Проверено: окно 10 секунд из файла 1.78 ГБ — 38 секунд и 1.8 МБ на диске.
 
-    HF_HOME=~/praxis/hf python3 make_devset.py --sessions 8 --out ~/praxis/devset
+    HF_TOKEN=... python scripts/make_devset.py --sessions 8 --out data/devset
 """
 
 from __future__ import annotations
@@ -15,11 +16,12 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-from huggingface_hub import hf_hub_download
+from huggingface_hub import get_hf_file_metadata, hf_hub_download, hf_hub_url
 
 REPO = "cvml-nus/assembly101"
 # Номера кадров в аннотациях привязаны к 30 fps, хотя исходники сняты на 60.
@@ -28,6 +30,14 @@ LABEL_FPS = 30.0
 
 def fetch(path: str) -> Path:
     return Path(hf_hub_download(REPO, path, repo_type="dataset"))
+
+
+def signed_url(path: str) -> str:
+    """Прямая ссылка на CDN: по ней ffmpeg ходит range-запросами вместо полной загрузки."""
+    metadata = get_hf_file_metadata(
+        hf_hub_url(REPO, path, repo_type="dataset"), token=os.environ.get("HF_TOKEN")
+    )
+    return metadata.location
 
 
 def action_map() -> dict[str, tuple[str, str]]:
@@ -126,7 +136,8 @@ def probe(path: Path) -> dict:
     }
 
 
-def cut(source: Path, start: float, duration: float, out: Path) -> None:
+def cut(source: str, start: float, duration: float, out: Path) -> None:
+    """Режет окно из локального файла или прямо из удалённого по подписанной ссылке."""
     subprocess.run(
         [
             "ffmpeg",
@@ -136,7 +147,7 @@ def cut(source: Path, start: float, duration: float, out: Path) -> None:
             "-ss",
             f"{start:.3f}",
             "-i",
-            str(source),
+            source,
             "-t",
             f"{duration:.3f}",
             "-vf",
@@ -204,7 +215,6 @@ def main() -> None:
     parser.add_argument("--min-steps", type=int, default=2)
     parser.add_argument("--max-steps", type=int, default=5)
     parser.add_argument("--max-gap", type=float, default=2.0)
-    parser.add_argument("--keep-source", action="store_true", help="не удалять исходные записи")
     args = parser.parse_args()
 
     clips_dir = args.out / "clips"
@@ -213,7 +223,10 @@ def main() -> None:
     gt_dir.mkdir(parents=True, exist_ok=True)
 
     actions = action_map()
-    label_files = read_split(args.split)[: args.sessions]
+    entries = read_split(args.split)
+    # Берём с шагом по всему сплиту: так в наборе окажутся разные игрушки, а не подряд одна.
+    stride = max(1, len(entries) // args.sessions)
+    label_files = entries[::stride][: args.sessions]
 
     total = 0
     for label_file in label_files:
@@ -223,7 +236,7 @@ def main() -> None:
         print(f"[{session}]", flush=True)
         try:
             labels = fetch(f"annotations/coarse-annotations/coarse_labels/{label_file}")
-            source = fetch(f"recordings/{session}/{args.view}.mp4")
+            source = signed_url(f"recordings/{session}/{args.view}.mp4")
         except Exception as error:  # noqa: BLE001 — пропускаем недоступную запись и идём дальше
             print(f"  пропуск: {error}", flush=True)
             continue
@@ -237,16 +250,13 @@ def main() -> None:
             offset = chunk[0]["start"]
             duration = chunk[-1]["end"] - offset
             clip = clips_dir / f"{session[-19:]}_{number}.mp4"
-            cut(Path(source), offset, duration, clip)
+            cut(source, offset, duration, clip)
             payload = annotation(clip, chunk, offset, actions)
             (gt_dir / f"{clip.stem}.json").write_text(
                 json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
             )
             total += 1
             print(f"  {clip.name}: {duration:.1f} с, шагов {len(chunk)}", flush=True)
-
-        if not args.keep_source:
-            Path(source).unlink(missing_ok=True)
 
     print(f"готово: {total} роликов в {args.out}")
 

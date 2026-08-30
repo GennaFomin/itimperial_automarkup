@@ -14,6 +14,7 @@ interface Props {
   onMerge: (id: number) => void
   onDelete: (id: number) => void
   onKeyframeHere: (id: number) => void
+  onVerify: (id: number, verified: boolean) => void
 }
 
 export function StepList(props: Props) {
@@ -32,7 +33,12 @@ export function StepList(props: Props) {
         return (
           <div
             key={step.id}
-            className={`step ${selected ? 'selected' : ''} ${isUncertain(step) ? 'uncertain' : ''}`}
+            className={[
+              'step',
+              selected ? 'selected' : '',
+              isUncertain(step) ? 'uncertain' : '',
+              step.verified ? 'verified' : '',
+            ].join(' ')}
             onClick={() => props.onSelect(step.id)}
           >
             <div className="step-head">
@@ -41,6 +47,16 @@ export function StepList(props: Props) {
                 {step.start_sec.toFixed(2)} — {step.end_sec.toFixed(2)} с
               </button>
               <span className="grow" />
+              <button
+                className={`check ${step.verified ? 'on' : ''}`}
+                title={step.verified ? 'Проверено (V — снять)' : 'Отметить проверенным (V)'}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  props.onVerify(step.id, !step.verified)
+                }}
+              >
+                {step.verified ? '✓' : '○'}
+              </button>
               {step.source !== 'auto' && <span className="tag">правка</span>}
               {step.confidence !== null && (
                 <span className="conf" title="Уверенность модели">

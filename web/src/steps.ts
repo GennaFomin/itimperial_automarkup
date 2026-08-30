@@ -5,10 +5,12 @@ export const MIN_STEP = 0.4
 
 const round3 = (value: number) => Math.round(value * 1000) / 1000
 
-/** Правка пользователя перестаёт быть автоматической разметкой — это видно в экспорте. */
+/** Правка пользователя перестаёт быть автоматической разметкой — это видно в экспорте.
+ *  Правка одновременно означает проверку: если шаг меняли, на него точно смотрели. */
 const touched = (step: Step): Step => ({
   ...step,
   source: step.source === 'auto' ? 'edited' : step.source,
+  verified: true,
 })
 
 export const sortSteps = (steps: Step[]): Step[] =>
@@ -102,3 +104,23 @@ export function updateStep(steps: Step[], id: number, patch: Partial<Step>): Ste
 
 export const isUncertain = (step: Step): boolean =>
   step.source === 'auto' && step.confidence !== null && step.confidence < 0.5
+
+export const setVerified = (steps: Step[], id: number, verified: boolean): Step[] =>
+  steps.map((step) => (step.id === id ? { ...step, verified } : step))
+
+/** Подтвердить всё непроверенное разом — этим заканчивается разбор ролика. */
+export const verifyAll = (steps: Step[]): Step[] =>
+  steps.map((step) => (step.verified ? step : { ...step, verified: true }))
+
+/** Следующий непроверенный шаг после текущего, по кругу. Основа быстрого разбора. */
+export function nextUnverified(steps: Step[], afterId: number | null): Step | null {
+  const ordered = sortSteps(steps)
+  const start = ordered.findIndex((step) => step.id === afterId)
+  for (let offset = 1; offset <= ordered.length; offset += 1) {
+    const candidate = ordered[(start + offset + ordered.length) % ordered.length]
+    if (!candidate.verified) return candidate
+  }
+  return null
+}
+
+export const verifiedCount = (steps: Step[]): number => steps.filter((s) => s.verified).length

@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from praxis import config, jobs, media, store
-from praxis.schema import Annotation, to_csv
+from praxis.schema import Annotation, to_csv, to_json
 from praxis.vocab import check_annotation, load_vocabulary
 
 
@@ -112,7 +112,7 @@ async def export_json(video_id: str) -> FileResponse:
         raise HTTPException(409, "разметки нет")
     annotation = Annotation.model_validate_json(record["annotation"])
     path = store.video_dir(video_id) / "annotation.json"
-    path.write_text(annotation.model_dump_json(indent=2), encoding="utf-8")
+    path.write_text(to_json(annotation, config.EXPORT_VERIFIED), encoding="utf-8")
     store.log_event(video_id, "export", {"format": "json"})
     return FileResponse(path, media_type="application/json", filename=f"{video_id}.json")
 
@@ -125,7 +125,7 @@ async def export_csv(video_id: str) -> PlainTextResponse:
     annotation = Annotation.model_validate_json(record["annotation"])
     store.log_event(video_id, "export", {"format": "csv"})
     return PlainTextResponse(
-        to_csv(annotation),
+        to_csv(annotation, config.EXPORT_VERIFIED),
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{video_id}.csv"'},
     )

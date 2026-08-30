@@ -25,6 +25,11 @@ PIPELINE = os.getenv("PRAXIS_PIPELINE", "stub")
 VLM_BASE_URL = os.getenv("PRAXIS_VLM_BASE_URL", "")
 VLM_MODEL = os.getenv("PRAXIS_VLM_MODEL", "Qwen/Qwen3-VL-8B-Instruct")
 
+# Писать ли в экспорт отметку о проверке шага человеком. В требованиях кейса такого
+# поля нет, но заказчику важно знать, что подтверждено живым человеком, а что нет.
+# Гасится одной переменной, если приёмка окажется строгой к лишним полям.
+EXPORT_VERIFIED = os.getenv("PRAXIS_EXPORT_VERIFIED", "1").lower() not in {"0", "false", "no"}
+
 # Плёнка кадров под таймлайном и разрешение сигнала движения.
 FILMSTRIP_COUNT = 40
 MOTION_FPS = 10

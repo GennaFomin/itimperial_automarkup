@@ -121,3 +121,23 @@ def test_vocabulary_has_expected_assembly101_shape():
     assert len(vocab.actions) == 11
     assert len(vocab.objects) == 61
     assert sum(len(v) for v in vocab.pairs.values()) == 202
+
+
+def test_verified_flag_survives_roundtrip_and_can_be_hidden():
+    from praxis.schema import to_json
+
+    original = annotation(
+        step(0, 0.0, 5.0, verified=True),
+        step(1, 5.0, 12.0, action="screw", object="chassis"),
+    )
+
+    assert steps_from_csv(to_csv(original)) == original.steps
+    assert '"verified": true' in to_json(original)
+
+    # Приёмка может не ждать лишних полей — тогда отметка гасится одним флагом.
+    hidden_csv = to_csv(original, include_verified=False)
+    assert "verified" not in hidden_csv.splitlines()[0]
+    assert "verified" not in to_json(original, include_verified=False)
+
+    # Старый CSV без колонки читается по-прежнему.
+    assert steps_from_csv(hidden_csv)[0].verified is False

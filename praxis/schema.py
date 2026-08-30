@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 from datetime import datetime, timezone
 from enum import Enum
 
@@ -43,6 +44,9 @@ class Step(BaseModel):
     keyframe_sec: float | None = Field(default=None, ge=0)
     confidence: float | None = Field(default=None, ge=0, le=1)
     source: Source = Source.auto
+    # Человек посмотрел на этот шаг и подтвердил его. Отличается от source: правка
+    # означает, что шаг меняли, а проверка — что на него смотрели глазами.
+    verified: bool = False
 
     @property
     def duration_sec(self) -> float:
@@ -141,6 +145,7 @@ CSV_COLUMNS = [
     "keyframe_sec",
     "confidence",
     "source",
+    "verified",
 ]
 
 
@@ -148,10 +153,13 @@ def _fmt(value: float | None) -> str:
     return "" if value is None else f"{value:.3f}"
 
 
-def to_csv(annotation: Annotation) -> str:
+def to_csv(annotation: Annotation, include_verified: bool = True) -> str:
     """Плоский экспорт: одна строка на шаг, иерархия выражена через parent_id."""
+    columns = CSV_COLUMNS if include_verified else [c for c in CSV_COLUMNS if c != "verified"]
     buffer = io.StringIO()
-    writer = csv.DictWriter(buffer, fieldnames=CSV_COLUMNS, lineterminator="\n")
+    writer = csv.DictWriter(
+        buffer, fieldnames=columns, lineterminator="\n", extrasaction="ignore"
+    )
     writer.writeheader()
     for step in sorted(annotation.steps, key=lambda s: (s.start_sec, s.id)):
         writer.writerow(
@@ -169,6 +177,7 @@ def to_csv(annotation: Annotation) -> str:
                 "keyframe_sec": _fmt(step.keyframe_sec),
                 "confidence": _fmt(step.confidence),
                 "source": step.source.value,
+                "verified": int(step.verified),
             }
         )
     return buffer.getvalue()
@@ -190,6 +199,16 @@ def steps_from_csv(text: str) -> list[Step]:
                 keyframe_sec=float(row["keyframe_sec"]) if row["keyframe_sec"] else None,
                 confidence=float(row["confidence"]) if row["confidence"] else None,
                 source=Source(row["source"]),
+                verified=bool(int(row.get("verified") or 0)),
             )
         )
     return steps
+
+
+def to_json(annotation: Annotation, include_verified: bool = True, indent: int | None = 2) -> str:
+    """JSON-экспорт. Отметку о проверке можно погасить, если её не ждут на приёмке."""
+    payload = annotation.model_dump(mode="json")
+    if not include_verified:
+        for step in payload["steps"]:
+            step.pop("verified", None)
+    return json.dumps(payload, ensure_ascii=False, indent=indent)

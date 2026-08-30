@@ -12,6 +12,7 @@ export interface Step {
   keyframe_sec: number | null
   confidence: number | null
   source: Source
+  verified: boolean
 }
 
 export interface VideoMeta {
