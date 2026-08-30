@@ -13,6 +13,29 @@ from praxis.schema import Annotation, Provenance, VideoMeta
 from praxis.vocab import load_vocabulary
 
 
+def annotate_clip(
+    source: Path, meta: VideoMeta, motion: list[float], started: float | None = None
+) -> Annotation:
+    """Ядро разметки без веб-обвязки: используется и фоновой задачей, и пакетным прогоном."""
+    started = time.perf_counter() if started is None else started
+    vocabulary = load_vocabulary(config.VOCAB_PATH)
+    segmenter = get_segmenter(config.PIPELINE)
+    result = segmenter.run(source, meta, vocabulary, motion)
+
+    return Annotation(
+        video=meta,
+        steps=result.steps,
+        provenance=Provenance(
+            app_version=_version(),
+            pipeline=segmenter.name,
+            vocabulary=vocabulary.name,
+            models=result.models,
+            backend=config.VLM_BASE_URL or "local",
+            processing_sec=round(time.perf_counter() - started, 3),
+        ),
+    )
+
+
 def process_video(video_id: str) -> None:
     """Синхронная обработка одного ролика. Вызывается из фоновой задачи."""
     started = time.perf_counter()
@@ -36,23 +59,8 @@ def process_video(video_id: str) -> None:
         motion = media.motion_signal(source)
         strip = media.filmstrip(source, meta.duration_sec, directory / "strip")
 
-        vocabulary = load_vocabulary(config.VOCAB_PATH)
-        segmenter = get_segmenter(config.PIPELINE)
-        result = segmenter.run(source, meta, vocabulary, motion)
-
-        elapsed = round(time.perf_counter() - started, 3)
-        annotation = Annotation(
-            video=meta,
-            steps=result.steps,
-            provenance=Provenance(
-                app_version=_version(),
-                pipeline=segmenter.name,
-                vocabulary=vocabulary.name,
-                models=result.models,
-                backend=config.VLM_BASE_URL or "local",
-                processing_sec=elapsed,
-            ),
-        )
+        annotation = annotate_clip(source, meta, motion, started)
+        elapsed = annotation.provenance.processing_sec
 
         store.update_video(
             video_id,
