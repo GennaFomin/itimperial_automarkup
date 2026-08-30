@@ -103,7 +103,7 @@ curl http://localhost:8000/api/videos/120711f1dab7/export.csv  > annotation.csv
 
 CSV — тот же список плоскими строками:
 `video_id, filename, step_id, level, parent_id, start_sec, end_sec, duration_sec,
-action, object, keyframe_sec, confidence, source`.
+action, object, keyframe_sec, confidence, source, verified`.
 
 ## Словарь действий
 
@@ -128,7 +128,7 @@ action, object, keyframe_sec, confidence, source`.
 ## Разработка
 
 ```bash
-~/.venvs/praxis/bin/python -m pytest -q     # 23 теста: схема, словарь, сквозной путь
+~/.venvs/praxis/bin/python -m pytest -q     # 28 тестов: схема, словарь, сквозной путь, метрики
 cd web && npm run build                      # проверка типов и сборка фронта
 ```
 
