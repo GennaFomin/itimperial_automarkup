@@ -24,6 +24,9 @@ PIPELINE = os.getenv("PRAXIS_PIPELINE", "motion-dp")
 # Куда ходить за VLM. Пусто — значит семантика недоступна и работает запасной путь.
 VLM_BASE_URL = os.getenv("PRAXIS_VLM_BASE_URL", "")
 VLM_MODEL = os.getenv("PRAXIS_VLM_MODEL", "Qwen/Qwen3-VL-8B-Instruct")
+VLM_FRAMES = int(os.getenv("PRAXIS_VLM_FRAMES", "4"))
+VLM_FRAME_WIDTH = int(os.getenv("PRAXIS_VLM_FRAME_WIDTH", "448"))
+VLM_TIMEOUT = float(os.getenv("PRAXIS_VLM_TIMEOUT", "120"))
 
 # Писать ли в экспорт отметку о проверке шага человеком. В требованиях кейса такого
 # поля нет, но заказчику важно знать, что подтверждено живым человеком, а что нет.

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from praxis import config, media, store
 from praxis.pipeline.base import Perception, get_segmenter
+from praxis.pipeline.naming import get_namer
 from praxis.schema import Annotation, Provenance, VideoMeta
 from praxis.vocab import load_vocabulary
 
@@ -35,14 +36,18 @@ def annotate_clip(
     segmenter = get_segmenter(config.PIPELINE)
     result = segmenter.run(source, meta, vocabulary, perception)
 
+    # Границы уже стоят — языковая модель только называет то, что нарезано.
+    namer = get_namer()
+    named = namer.name_steps(source, meta, result.steps, vocabulary)
+
     return Annotation(
         video=meta,
-        steps=result.steps,
+        steps=named.steps,
         provenance=Provenance(
             app_version=_version(),
             pipeline=segmenter.name,
             vocabulary=vocabulary.name,
-            models=result.models,
+            models={**result.models, **named.models},
             backend=config.VLM_BASE_URL or "local",
             processing_sec=round(time.perf_counter() - started, 3),
         ),
