@@ -6,6 +6,7 @@ __pycache__/
 node_modules/
 dist/
 work/
-data/
+# Только корневой каталог с сырыми датасетами — praxis/data со словарями нужен в репозитории.
+/data/
 *.db
 .env

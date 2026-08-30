@@ -87,16 +87,34 @@ def extract_frame(video: Path, at_sec: float, out: Path, width: int = 640) -> Pa
 def filmstrip(
     video: Path, duration_sec: float, out_dir: Path, count: int | None = None
 ) -> list[str]:
-    """Равномерная плёнка превью для таймлайна. Возвращает имена файлов по порядку."""
+    """Равномерная плёнка превью для таймлайна.
+
+    Одним вызовом ffmpeg, а не покадрово: сорок запусков процесса стоили десять секунд
+    на четырнадцатисекундном ролике, а скорость обработки — метрика кейса.
+    """
     count = count or config.FILMSTRIP_COUNT
     out_dir.mkdir(parents=True, exist_ok=True)
-    names: list[str] = []
-    for index in range(count):
-        at = duration_sec * (index + 0.5) / count
-        name = f"strip_{index:03d}.jpg"
-        extract_frame(video, at, out_dir / name, width=160)
-        names.append(name)
-    return names
+    for stale in out_dir.glob("strip_*.jpg"):
+        stale.unlink()
+
+    _run(
+        [
+            "ffmpeg",
+            "-y",
+            "-v",
+            "error",
+            "-i",
+            str(video),
+            "-vf",
+            f"fps={count / max(duration_sec, 0.001)},scale=160:-2",
+            "-frames:v",
+            str(count),
+            "-q:v",
+            "5",
+            str(out_dir / "strip_%03d.jpg"),
+        ]
+    )
+    return sorted(path.name for path in out_dir.glob("strip_*.jpg"))
 
 
 def motion_signal(video: Path, fps: int | None = None) -> list[float]:

@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from praxis import config, jobs, media, store
@@ -174,3 +175,9 @@ async def post_event(video_id: str, event: EventIn) -> dict:
 @app.get("/api/stats")
 async def get_stats() -> dict:
     return store.review_stats()
+
+
+# Собранный фронт отдаётся тем же процессом — в докере это один контейнер, без nginx.
+# Монтируется последним, чтобы не перехватывать /api.
+if config.WEB_DIST.exists():
+    app.mount("/", StaticFiles(directory=config.WEB_DIST, html=True), name="web")

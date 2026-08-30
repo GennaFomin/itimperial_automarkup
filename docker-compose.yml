@@ -1,0 +1,16 @@
+services:
+  praxis:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - praxis-work:/data
+    environment:
+      # Пусто — работает заглушка сегментатора; адрес vLLM подставляется на площадке.
+      PRAXIS_VLM_BASE_URL: "${PRAXIS_VLM_BASE_URL:-}"
+      PRAXIS_VLM_MODEL: "${PRAXIS_VLM_MODEL:-Qwen/Qwen3-VL-8B-Instruct}"
+      PRAXIS_PIPELINE: "${PRAXIS_PIPELINE:-stub}"
+      PRAXIS_VOCAB: "${PRAXIS_VOCAB:-}"
+
+volumes:
+  praxis-work:

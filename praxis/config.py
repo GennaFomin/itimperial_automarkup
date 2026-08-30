@@ -8,6 +8,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 WORK_DIR = Path(os.getenv("PRAXIS_WORK_DIR", ROOT / "work"))
+# Собранный фронт. В докере пакет ставится в site-packages, поэтому путь задаётся явно.
+WEB_DIST = Path(os.getenv("PRAXIS_WEB_DIST", ROOT / "web" / "dist"))
 DB_PATH = WORK_DIR / "praxis.db"
 VOCAB_PATH = os.getenv("PRAXIS_VOCAB") or None
 
