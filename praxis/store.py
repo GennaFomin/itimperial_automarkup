@@ -1,0 +1,139 @@
+"""Хранилище: SQLite для состояния задач, разметки и событий редактора.
+
+Видео и кадры лежат на диске, всё остальное — здесь. События нужны не для красоты:
+из них считается фактическое время работы над роликом, то есть KPI кейса.
+"""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Iterator
+
+from praxis import config
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS videos (
+    id             TEXT PRIMARY KEY,
+    filename       TEXT NOT NULL,
+    duration_sec   REAL,
+    fps            REAL,
+    width          INTEGER,
+    height         INTEGER,
+    status         TEXT NOT NULL,
+    error          TEXT,
+    processing_sec REAL,
+    annotation     TEXT,
+    motion         TEXT,
+    filmstrip      TEXT,
+    created_at     TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS events (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    video_id TEXT NOT NULL,
+    kind     TEXT NOT NULL,
+    payload  TEXT,
+    at       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS events_video ON events(video_id);
+"""
+
+
+def now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+@contextmanager
+def connect() -> Iterator[sqlite3.Connection]:
+    config.WORK_DIR.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(config.DB_PATH, timeout=10)
+    connection.row_factory = sqlite3.Row
+    try:
+        yield connection
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def init_db() -> None:
+    with connect() as connection:
+        connection.executescript(SCHEMA)
+
+
+def create_video(video_id: str, filename: str, meta: dict) -> None:
+    with connect() as connection:
+        connection.execute(
+            "INSERT INTO videos (id, filename, duration_sec, fps, width, height, status, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, 'queued', ?)",
+            (
+                video_id,
+                filename,
+                meta["duration_sec"],
+                meta["fps"],
+                meta["width"],
+                meta["height"],
+                now(),
+            ),
+        )
+
+
+def update_video(video_id: str, **fields) -> None:
+    if not fields:
+        return
+    assignments = ", ".join(f"{key} = ?" for key in fields)
+    with connect() as connection:
+        connection.execute(
+            f"UPDATE videos SET {assignments} WHERE id = ?", (*fields.values(), video_id)
+        )
+
+
+def get_video(video_id: str) -> dict | None:
+    with connect() as connection:
+        row = connection.execute("SELECT * FROM videos WHERE id = ?", (video_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def list_videos() -> list[dict]:
+    with connect() as connection:
+        rows = connection.execute("SELECT * FROM videos ORDER BY created_at DESC").fetchall()
+    return [dict(row) for row in rows]
+
+
+def log_event(video_id: str, kind: str, payload: dict | None = None) -> None:
+    with connect() as connection:
+        connection.execute(
+            "INSERT INTO events (video_id, kind, payload, at) VALUES (?, ?, ?, ?)",
+            (video_id, kind, json.dumps(payload or {}, ensure_ascii=False), now()),
+        )
+
+
+def review_stats() -> dict:
+    """Сколько человек реально потратил на проверку роликов — основа для KPI «в 3 раза»."""
+    with connect() as connection:
+        rows = connection.execute(
+            "SELECT video_id, payload FROM events WHERE kind = 'review_seconds'"
+        ).fetchall()
+    per_video: dict[str, float] = {}
+    for row in rows:
+        seconds = float(json.loads(row["payload"]).get("seconds", 0))
+        per_video[row["video_id"]] = per_video.get(row["video_id"], 0.0) + seconds
+    values = sorted(per_video.values())
+    if not values:
+        return {"videos": 0, "total_sec": 0.0, "median_sec": 0.0, "per_video": {}}
+    middle = len(values) // 2
+    median = values[middle] if len(values) % 2 else (values[middle - 1] + values[middle]) / 2
+    return {
+        "videos": len(values),
+        "total_sec": round(sum(values), 1),
+        "median_sec": round(median, 1),
+        "per_video": {key: round(value, 1) for key, value in per_video.items()},
+    }
+
+
+def video_dir(video_id: str) -> Path:
+    path = config.WORK_DIR / video_id
+    path.mkdir(parents=True, exist_ok=True)
+    return path
