@@ -91,6 +91,7 @@ def segment(
     boundary_weight: float = 0.02,
     max_segments: int = 8,
     min_segment_sec: float = MIN_SEGMENT_SEC,
+    min_gain: float = 0.0,
 ) -> list[tuple[int, int]]:
     """Оптимальное разбиение на отрезки. Возвращает пары индексов кадров [начало, конец).
 
@@ -140,7 +141,37 @@ def segment(
         start = int(back[count, end])
         bounds.append((start, end))
         end = start
-    return list(reversed(bounds))
+    return prune_boundaries(list(reversed(bounds)), cost, min_gain)
+
+
+def prune_boundaries(
+    bounds: list[tuple[int, int]], cost: np.ndarray, min_gain: float
+) -> list[tuple[int, int]]:
+    """Убирает границы, которые ничего не объясняют.
+
+    Глобального штрафа мало: он одинаков для всех роликов, а «лишний» разрез бывает
+    дешёвым в одном ролике и осмысленным в другом. Здесь каждая граница проверяется
+    локально — насколько разрез двух соседних отрезков лучше их объединения. Если выигрыш
+    меньше порога, соседи сливаются, и так до тех пор, пока слабые границы не кончатся.
+    """
+    if min_gain <= 0:
+        return bounds
+
+    working = list(bounds)
+    while len(working) > 1:
+        gains = []
+        for index in range(len(working) - 1):
+            left, right = working[index], working[index + 1]
+            merged = cost[left[0], right[1]]
+            separate = cost[left[0], left[1]] + cost[right[0], right[1]]
+            gains.append((merged - separate) / merged if merged > 1e-12 else 0.0)
+
+        weakest = int(np.argmin(gains))
+        if gains[weakest] >= min_gain:
+            break
+        left, right = working[weakest], working[weakest + 1]
+        working[weakest : weakest + 2] = [(left[0], right[1])]
+    return working
 
 
 def pick_keyframe(features: np.ndarray, motion: np.ndarray, start: int, end: int) -> int:

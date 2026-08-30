@@ -27,6 +27,9 @@ class Perception:
     fps: float
     motion: "np.ndarray"
     appearance: "np.ndarray"
+    # Доли кадра (слева, сверху, ширина, высота), в которых вообще что-то происходит.
+    # Нужны семантической стадии: на широком плане стола детали слишком мелкие.
+    crop: tuple[float, float, float, float] | None = None
 
 
 @dataclass

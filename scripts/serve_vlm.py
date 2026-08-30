@@ -24,16 +24,39 @@ from fastapi import FastAPI
 from PIL import Image
 from pydantic import BaseModel
 
-PROMPT = """Ты размечаешь видео сборки и разборки игрушечных машин.
+PROMPT = """Кадры идут по порядку и показывают один фрагмент видео: человек за столом
+собирает или разбирает игрушечную машину из пластиковых деталей.
 
-На кадрах — один фрагмент видео. Определи, какое действие выполняет человек и с каким
-объектом он это делает.
+Твоя задача — назвать действие, которое человек **выполнил за этот фрагмент**, и деталь,
+над которой он работал. Не описывай каждое мгновение: важен итог фрагмента.
+
+Сравни первый и последний кадр:
+- если к модели добавилась деталь — это attach, и назови именно её;
+- если деталь снята с модели — detach;
+- если человек работает отвёрткой — screw или unscrew;
+- если деталь просто переставлена или поправлена без соединения — position;
+- если деталь убрана из рабочей зоны — remove;
+- если состояние модели не изменилось и человек только смотрел или поворачивал деталь
+  в руках — inspect;
+- если он показывает работу уже собранной модели — demonstrate;
+- если попытка соединить или открутить не удалась — attempt to attach, attempt to detach,
+  attempt to screw.
+
+Человек почти всё время что-то держит и поворачивает в руках — само по себе это не inspect.
+Спрашивай себя: изменилось ли к концу фрагмента то, что присоединено к модели.
 
 Допустимые действия: {actions}
-Допустимые объекты: {objects}
+Допустимые детали: {objects}
 
-Ответь строго одним объектом JSON без пояснений:
-{{"action": "<одно из допустимых действий>", "object": "<один из допустимых объектов>", "confidence": <число от 0 до 1>}}"""
+Ответь ровно двумя строками. Первая — короткое наблюдение: что изменилось между первым и
+последним кадром. Вторая — только JSON:
+{{"action": "<действие из списка>", "object": "<деталь из списка>", "confidence": <0..1>}}"""
+
+
+# Калибровка уверенности по измеренной точности, а не по самооценке модели.
+CONFIDENCE_BOTH = 0.4
+CONFIDENCE_ACTION_ONLY = 0.25
+CONFIDENCE_NONE = 0.1
 
 
 class Segment(BaseModel):
@@ -82,13 +105,13 @@ def closest(value: str, allowed: list[str]) -> str | None:
 
 
 def parse(text: str) -> dict:
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if not match:
-        return {}
-    try:
-        return json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return {}
+    matches = re.findall(r"\{[^{}]*\}", text, re.DOTALL)
+    for candidate in reversed(matches):
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+    return {}
 
 
 @app.get("/health")
@@ -121,7 +144,7 @@ def annotate(request: Request) -> dict:
         ).to(model.device)
 
         with torch.inference_mode():
-            generated = model.generate(**inputs, max_new_tokens=64, do_sample=False)
+            generated = model.generate(**inputs, max_new_tokens=160, do_sample=False)
         text = processor.batch_decode(
             generated[:, inputs["input_ids"].shape[1] :], skip_special_tokens=True
         )[0]
@@ -135,13 +158,13 @@ def annotate(request: Request) -> dict:
         )
         obj = closest(str(answer.get("object", "")), objects)
 
-        # Уверенность модели корректируем на то, попали ли мы в словарь без натяжек.
-        reported = answer.get("confidence")
-        confidence = float(reported) if isinstance(reported, (int, float)) else 0.5
+        # Самооценку модели наружу не отдаём: измерено, что она ставит 0.95 и там, где
+        # ошибается, — с такой «уверенностью» триаж в редакторе перестаёт работать.
+        # Вместо неё — калибровка по фактической точности на валидационном наборе
+        # (действие 0.38, пара 0.14). Пересчитать, когда появится настоящая таксономия.
+        confidence = CONFIDENCE_BOTH if (action and obj) else CONFIDENCE_ACTION_ONLY
         if action is None:
-            confidence = min(confidence, 0.2)
-        if obj is None:
-            confidence = min(confidence, 0.35)
+            confidence = CONFIDENCE_NONE
 
         results.append(
             {

@@ -230,9 +230,16 @@ def main() -> None:
 
     total = 0
     for label_file in label_files:
+        # Именно removeprefix, а не replace: "disassembly_" содержит внутри "assembly_",
+        # и замена превращала имя сессии в "dis…", после чего запись не находилась.
         session = (
-            label_file.replace("assembly_", "").replace("disassembly_", "").removesuffix(".txt")
+            label_file.removeprefix("disassembly_").removeprefix("assembly_").removesuffix(".txt")
         )
+        direction = "disassembly" if label_file.startswith("disassembly_") else "assembly"
+        # Код изделия лежит в имени сессии: nusar-2021_action_both_9012-c14b_… → c14b.
+        # Он нужен дальше: у одной игрушки допустимо около десятка пар вместо 202.
+        parts = session.split("_")
+        toy = parts[3].split("-")[-1] if len(parts) > 3 else "unknown"
         print(f"[{session}]", flush=True)
         try:
             labels = fetch(f"annotations/coarse-annotations/coarse_labels/{label_file}")
@@ -249,7 +256,7 @@ def main() -> None:
         for number, chunk in enumerate(chosen):
             offset = chunk[0]["start"]
             duration = chunk[-1]["end"] - offset
-            clip = clips_dir / f"{session[-19:]}_{number}.mp4"
+            clip = clips_dir / f"{toy}_{direction[:3]}_{session[-19:]}_{number}.mp4"
             cut(source, offset, duration, clip)
             payload = annotation(clip, chunk, offset, actions)
             (gt_dir / f"{clip.stem}.json").write_text(

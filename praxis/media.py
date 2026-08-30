@@ -59,9 +59,22 @@ def probe(path: Path) -> dict:
     }
 
 
-def extract_frame(video: Path, at_sec: float, out: Path, width: int = 640) -> Path:
-    """Один кадр в JPEG. Используется для ключевых кадров шагов."""
+def extract_frame(
+    video: Path,
+    at_sec: float,
+    out: Path,
+    width: int = 640,
+    crop: tuple[float, float, float, float] | None = None,
+) -> Path:
+    """Один кадр в JPEG. Кроп задаётся долями кадра (слева, сверху, ширина, высота)."""
     out.parent.mkdir(parents=True, exist_ok=True)
+    filters = []
+    if crop:
+        left, top, span_x, span_y = crop
+        filters.append(
+            f"crop=iw*{span_x:.4f}:ih*{span_y:.4f}:iw*{left:.4f}:ih*{top:.4f}"
+        )
+    filters.append(f"scale={width}:-2")
     _run(
         [
             "ffmpeg",
@@ -73,7 +86,7 @@ def extract_frame(video: Path, at_sec: float, out: Path, width: int = 640) -> Pa
             "-frames:v",
             "1",
             "-vf",
-            f"scale={width}:-2",
+            ",".join(filters),
             "-q:v",
             "3",
             str(out),
@@ -171,6 +184,32 @@ def _pool(frames: np.ndarray, blocks: tuple[int, int]) -> np.ndarray:
 def appearance_from_frames(frames: np.ndarray, blocks: tuple[int, int] = (9, 16)) -> np.ndarray:
     """Огрублённый вид кадра: усреднение по блокам. Устойчиво к шуму и дрожанию камеры."""
     return _pool(frames, blocks)
+
+
+def active_region(frames: np.ndarray, quantile: float = 0.8, margin: float = 0.1) -> tuple:
+    """Прямоугольник, в котором вообще происходит движение за весь ролик.
+
+    Камера статична, и большую часть кадра занимает неподвижный фон: стол, стены, штативы.
+    Признаки, посчитанные по всему кадру, в основном описывают этот фон. Ограничиваем их
+    рабочей зоной — тем местом, где руки что-то делают.
+    """
+    if len(frames) < 2:
+        return (0, frames.shape[1], 0, frames.shape[2]) if len(frames) else (0, 1, 0, 1)
+
+    activity = np.abs(np.diff(frames, axis=0)).mean(axis=0)
+    threshold = np.quantile(activity, quantile)
+    rows, columns = np.where(activity >= threshold)
+    if not len(rows):
+        return 0, frames.shape[1], 0, frames.shape[2]
+
+    height, width = frames.shape[1], frames.shape[2]
+    pad_y, pad_x = int(height * margin), int(width * margin)
+    return (
+        max(0, int(rows.min()) - pad_y),
+        min(height, int(rows.max()) + pad_y + 1),
+        max(0, int(columns.min()) - pad_x),
+        min(width, int(columns.max()) + pad_x + 1),
+    )
 
 
 def motion_field_from_frames(frames: np.ndarray, blocks: tuple[int, int] = (9, 16)) -> np.ndarray:

@@ -24,8 +24,14 @@ PIPELINE = os.getenv("PRAXIS_PIPELINE", "motion-dp")
 # Куда ходить за VLM. Пусто — значит семантика недоступна и работает запасной путь.
 VLM_BASE_URL = os.getenv("PRAXIS_VLM_BASE_URL", "")
 VLM_MODEL = os.getenv("PRAXIS_VLM_MODEL", "Qwen/Qwen3-VL-8B-Instruct")
-VLM_FRAMES = int(os.getenv("PRAXIS_VLM_FRAMES", "4"))
-VLM_FRAME_WIDTH = int(os.getenv("PRAXIS_VLM_FRAME_WIDTH", "448"))
+CLIP_BASE_URL = os.getenv("PRAXIS_CLIP_BASE_URL", "")
+# auto — классификатор, если он поднят, иначе генеративная модель, иначе без семантики.
+NAMER = os.getenv("PRAXIS_NAMER", "auto")
+CLIP_MODE = os.getenv("PRAXIS_CLIP_MODE", "factored")
+CLIP_VERB_WEIGHT = float(os.getenv("PRAXIS_CLIP_VERB_WEIGHT", "1.0"))
+CLIP_NOUN_WEIGHT = float(os.getenv("PRAXIS_CLIP_NOUN_WEIGHT", "1.0"))
+VLM_FRAMES = int(os.getenv("PRAXIS_VLM_FRAMES", "8"))
+VLM_FRAME_WIDTH = int(os.getenv("PRAXIS_VLM_FRAME_WIDTH", "640"))
 VLM_TIMEOUT = float(os.getenv("PRAXIS_VLM_TIMEOUT", "120"))
 
 # Писать ли в экспорт отметку о проверке шага человеком. В требованиях кейса такого
@@ -46,3 +52,4 @@ SEGMENT_PENALTY = float(os.getenv("PRAXIS_SEGMENT_PENALTY", "0.3"))
 BOUNDARY_WEIGHT = float(os.getenv("PRAXIS_BOUNDARY_WEIGHT", "0.2"))
 MAX_SEGMENTS = int(os.getenv("PRAXIS_MAX_SEGMENTS", "8"))
 MIN_SEGMENT_SEC = float(os.getenv("PRAXIS_MIN_SEGMENT_SEC", "1.5"))
+MERGE_GAIN = float(os.getenv("PRAXIS_MERGE_GAIN", "0"))

@@ -51,13 +51,15 @@ def load_clips(clips: Path, gt: Path) -> list[tuple[Path, VideoMeta, Perception,
     return prepared
 
 
-def run_grid(prepared, penalties, weights, max_segments, minimums) -> list[dict]:
+def run_grid(prepared, penalties, weights, max_segments, minimums, gains) -> list[dict]:
     vocabulary = load_vocabulary()
     provenance = Provenance(app_version="tune", pipeline="motion-dp", vocabulary=vocabulary.name)
     rows = []
 
-    for penalty, weight, minimum in itertools.product(penalties, weights, minimums):
-        segmenter = PhysicalSegmenter(penalty, weight, max_segments, minimum)
+    for penalty, weight, minimum, gain in itertools.product(
+        penalties, weights, minimums, gains
+    ):
+        segmenter = PhysicalSegmenter(penalty, weight, max_segments, minimum, gain)
         items = []
         step_error = 0
         for clip, meta, perception, truth in prepared:
@@ -72,6 +74,7 @@ def run_grid(prepared, penalties, weights, max_segments, minimums) -> list[dict]
                 "penalty": penalty,
                 "weight": weight,
                 "minimum": minimum,
+                "gain": gain,
                 "f1_01": summary["f1@0.1_nolabel"],
                 "f1_025": summary["f1@0.25_nolabel"],
                 "f1_05": summary["f1@0.5_nolabel"],
@@ -94,7 +97,8 @@ def main() -> None:
     )
     parser.add_argument("--weights", type=float, nargs="+", default=[0.0, 0.02, 0.05, 0.1])
     parser.add_argument("--max-segments", type=int, default=8)
-    parser.add_argument("--minimums", type=float, nargs="+", default=[0.8])
+    parser.add_argument("--minimums", type=float, nargs="+", default=[1.5])
+    parser.add_argument("--gains", type=float, nargs="+", default=[0.0])
     parser.add_argument("--json", type=Path, help="куда сохранить таблицу")
     args = parser.parse_args()
 
@@ -106,24 +110,25 @@ def main() -> None:
         f"роликов: {len(prepared)}, признаки посчитаны за {time.perf_counter() - started:.1f} с\n"
     )
 
-    rows = run_grid(prepared, args.penalties, args.weights, args.max_segments, args.minimums)
+    rows = run_grid(prepared, args.penalties, args.weights, args.max_segments, args.minimums, args.gains)
     rows.sort(key=lambda row: (-row["f1_05"], -row["f1_025"], row["boundary"]))
 
     print(
-        f"{'штраф':>7} {'физика':>7} {'мин, с':>7} {'F1@0.1':>8} {'F1@0.25':>8} "
-        f"{'F1@0.5':>8} {'границы':>8} {'ошибка числа шагов':>19}"
+        f"{'штраф':>7} {'физика':>7} {'мин, с':>7} {'слияние':>8} {'F1@0.1':>8} "
+        f"{'F1@0.25':>8} {'F1@0.5':>8} {'границы':>8} {'ошибка шагов':>13}"
     )
     for row in rows:
         print(
-            f"{row['penalty']:>7.3f} {row['weight']:>7.3f} {row['minimum']:>7.1f} {row['f1_01']:>8.3f} "
-            f"{row['f1_025']:>8.3f} {row['f1_05']:>8.3f} {row['boundary']:>8.3f} "
-            f"{row['steps_mae']:>19.2f}"
+            f"{row['penalty']:>7.3f} {row['weight']:>7.3f} {row['minimum']:>7.1f} "
+            f"{row['gain']:>8.3f} {row['f1_01']:>8.3f} {row['f1_025']:>8.3f} "
+            f"{row['f1_05']:>8.3f} {row['boundary']:>8.3f} {row['steps_mae']:>13.2f}"
         )
 
     best = rows[0]
     print(
         f"\nлучшее: PRAXIS_SEGMENT_PENALTY={best['penalty']} "
-        f"PRAXIS_BOUNDARY_WEIGHT={best['weight']} PRAXIS_MIN_SEGMENT_SEC={best['minimum']}"
+        f"PRAXIS_BOUNDARY_WEIGHT={best['weight']} PRAXIS_MIN_SEGMENT_SEC={best['minimum']} "
+        f"PRAXIS_MERGE_GAIN={best['gain']}"
     )
     if args.json:
         args.json.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")

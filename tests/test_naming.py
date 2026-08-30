@@ -25,7 +25,7 @@ class FakeVlm(RemoteVlmNamer):
         super().__init__("http://example.invalid")
         self.results = results
 
-    def _frames(self, video_path: Path, step: Step) -> list[str]:
+    def _frames(self, video_path: Path, step: Step, crop=None) -> list[str]:
         return ["ZmFrZQ=="]
 
     def _post(self, path: str, payload: dict) -> dict:
@@ -72,7 +72,7 @@ def test_rejects_values_outside_vocabulary():
 def test_survives_unreachable_service():
     """Отказ сервиса не должен ронять разметку: шаги остаются, статус попадает в провенанс."""
     namer = RemoteVlmNamer("http://127.0.0.1:9/annotate", frames_per_step=1, timeout=1)
-    namer._frames = lambda video_path, step: ["ZmFrZQ=="]  # noqa: SLF001
+    namer._frames = lambda video_path, step, crop=None: ["ZmFrZQ=="]  # noqa: SLF001
 
     original = steps()
     result = namer.name_steps(Path("clip.mp4"), VIDEO, original, load_vocabulary())

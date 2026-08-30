@@ -32,7 +32,12 @@ class Namer(Protocol):
     name: str
 
     def name_steps(
-        self, video_path: Path, meta: VideoMeta, steps: list[Step], vocabulary: Vocabulary
+        self,
+        video_path: Path,
+        meta: VideoMeta,
+        steps: list[Step],
+        vocabulary: Vocabulary,
+        crop: tuple[float, float, float, float] | None = None,
     ) -> NamingResult: ...
 
 
@@ -42,15 +47,20 @@ class NullNamer:
     name = "none"
 
     def name_steps(
-        self, video_path: Path, meta: VideoMeta, steps: list[Step], vocabulary: Vocabulary
+        self,
+        video_path: Path,
+        meta: VideoMeta,
+        steps: list[Step],
+        vocabulary: Vocabulary,
+        crop: tuple[float, float, float, float] | None = None,
     ) -> NamingResult:
         return NamingResult(steps=steps, models={"namer": "none"})
 
 
-class RemoteVlmNamer:
-    """Клиент к сервису с видеомоделью (scripts/serve_vlm.py на GPU-машине)."""
+class HttpNamer:
+    """Общая часть клиентов: нарезка кадров сегмента и запрос к сервису на GPU-машине."""
 
-    name = "vlm"
+    name = "http"
 
     def __init__(
         self,
@@ -62,8 +72,54 @@ class RemoteVlmNamer:
         self.frames_per_step = frames_per_step or config.VLM_FRAMES
         self.timeout = timeout or config.VLM_TIMEOUT
 
+    def _frames(
+        self,
+        video_path: Path,
+        step: Step,
+        crop: tuple[float, float, float, float] | None = None,
+    ) -> list[str]:
+        """Кадры, равномерно разбросанные внутри шага, плюс его ключевой кадр."""
+        span = step.end_sec - step.start_sec
+        offsets = [
+            step.start_sec + span * (index + 0.5) / self.frames_per_step
+            for index in range(self.frames_per_step)
+        ]
+        if step.keyframe_sec is not None:
+            offsets.append(step.keyframe_sec)
+
+        encoded: list[str] = []
+        with tempfile.TemporaryDirectory() as directory:
+            for index, at in enumerate(sorted(set(round(value, 2) for value in offsets))):
+                path = Path(directory) / f"{index}.jpg"
+                media.extract_frame(
+                    video_path, at, path, width=config.VLM_FRAME_WIDTH, crop=crop
+                )
+                encoded.append(base64.b64encode(path.read_bytes()).decode())
+        return encoded
+
+    def _post(self, path: str, payload: dict) -> dict:
+        request = urllib.request.Request(
+            self.base_url + path,
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            return json.loads(response.read())
+
+
+class RemoteVlmNamer(HttpNamer):
+    """Клиент к генеративной видеомодели (scripts/serve_vlm.py)."""
+
+    name = "vlm"
+
     def name_steps(
-        self, video_path: Path, meta: VideoMeta, steps: list[Step], vocabulary: Vocabulary
+        self,
+        video_path: Path,
+        meta: VideoMeta,
+        steps: list[Step],
+        vocabulary: Vocabulary,
+        crop: tuple[float, float, float, float] | None = None,
     ) -> NamingResult:
         if not steps:
             return NamingResult(steps=steps, models={"namer": "vlm", "namer_status": "нет шагов"})
@@ -71,7 +127,8 @@ class RemoteVlmNamer:
         try:
             payload = {
                 "segments": [
-                    {"id": step.id, "frames": self._frames(video_path, step)} for step in steps
+                    {"id": step.id, "frames": self._frames(video_path, step, crop)}
+                    for step in steps
                 ],
                 "actions": vocabulary.actions,
                 "objects": vocabulary.objects,
@@ -105,35 +162,80 @@ class RemoteVlmNamer:
             },
         )
 
-    def _frames(self, video_path: Path, step: Step) -> list[str]:
-        """Кадры, равномерно разбросанные внутри шага, плюс его ключевой кадр."""
-        span = step.end_sec - step.start_sec
-        offsets = [
-            step.start_sec + span * (index + 0.5) / self.frames_per_step
-            for index in range(self.frames_per_step)
-        ]
-        if step.keyframe_sec is not None:
-            offsets.append(step.keyframe_sec)
 
-        encoded: list[str] = []
-        with tempfile.TemporaryDirectory() as directory:
-            for index, at in enumerate(sorted(set(round(value, 2) for value in offsets))):
-                path = Path(directory) / f"{index}.jpg"
-                media.extract_frame(video_path, at, path, width=config.VLM_FRAME_WIDTH)
-                encoded.append(base64.b64encode(path.read_bytes()).decode())
-        return encoded
 
-    def _post(self, path: str, payload: dict) -> dict:
-        request = urllib.request.Request(
-            self.base_url + path,
-            data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json"},
-            method="POST",
+class ClipNamer(HttpNamer):
+    """Клиент к классификатору по закрытому словарю (scripts/serve_clip.py).
+
+    Отдаёт не свободный текст, а распределение по 202 допустимым парам: значение вне
+    словаря невозможно по построению, а уверенность берётся из самого распределения.
+    """
+
+    name = "siglip"
+
+    def name_steps(
+        self,
+        video_path: Path,
+        meta: VideoMeta,
+        steps: list[Step],
+        vocabulary: Vocabulary,
+        crop: tuple[float, float, float, float] | None = None,
+    ) -> NamingResult:
+        if not steps:
+            return NamingResult(steps=steps, models={"namer": self.name, "namer_status": "нет шагов"})
+
+        pairs = (
+            [[action, obj] for action, objects in vocabulary.pairs.items() for obj in objects]
+            if vocabulary.pairs
+            else [[action, ""] for action in vocabulary.actions]
         )
-        with urllib.request.urlopen(request, timeout=self.timeout) as response:
-            return json.loads(response.read())
+        try:
+            answer = self._post(
+                "/classify",
+                {
+                    "segments": [
+                        {"id": step.id, "frames": self._frames(video_path, step, crop)}
+                        for step in steps
+                    ],
+                    "pairs": pairs,
+                    "mode": config.CLIP_MODE,
+                    "verb_weight": config.CLIP_VERB_WEIGHT,
+                    "noun_weight": config.CLIP_NOUN_WEIGHT,
+                },
+            )
+        except (urllib.error.URLError, OSError, TimeoutError, ValueError) as error:
+            return NamingResult(
+                steps=steps,
+                models={"namer": self.name, "namer_status": f"недоступен: {error}"},
+            )
+
+        by_id = {item["id"]: item for item in answer.get("results", [])}
+        for step in steps:
+            named = by_id.get(step.id)
+            if not named:
+                continue
+            if named.get("action") and vocabulary.has_action(named["action"]):
+                step.action = named["action"]
+            obj = named.get("object")
+            step.object = obj if obj and vocabulary.has_object(obj) else None
+            if named.get("confidence") is not None:
+                step.confidence = round(float(named["confidence"]), 3)
+
+        return NamingResult(
+            steps=steps,
+            models={
+                "namer": self.name,
+                "classifier": answer.get("model", ""),
+                "classifier_sec": str(answer.get("elapsed_sec", "")),
+            },
+        )
 
 
 def get_namer() -> Namer:
-    """Какой источник семантики использовать. Пустой адрес — работаем без неё."""
-    return RemoteVlmNamer(config.VLM_BASE_URL) if config.VLM_BASE_URL else NullNamer()
+    """Какой источник семантики использовать. Пустые адреса — работаем без неё."""
+    choice = config.NAMER
+    if choice in {"auto", "siglip"} and config.CLIP_BASE_URL:
+        return ClipNamer(config.CLIP_BASE_URL)
+    if choice in {"auto", "vlm"} and config.VLM_BASE_URL:
+        return RemoteVlmNamer(config.VLM_BASE_URL)
+    return NullNamer()

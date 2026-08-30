@@ -28,6 +28,7 @@ class PhysicalSegmenter:
         boundary_weight: float | None = None,
         max_segments: int | None = None,
         min_segment_sec: float | None = None,
+        min_gain: float | None = None,
     ) -> None:
         self.penalty = config.SEGMENT_PENALTY if penalty is None else penalty
         self.boundary_weight = (
@@ -37,6 +38,7 @@ class PhysicalSegmenter:
         self.min_segment_sec = (
             config.MIN_SEGMENT_SEC if min_segment_sec is None else min_segment_sec
         )
+        self.min_gain = config.MERGE_GAIN if min_gain is None else min_gain
 
     def run(
         self,
@@ -60,6 +62,7 @@ class PhysicalSegmenter:
             boundary_weight=self.boundary_weight,
             max_segments=self.max_segments,
             min_segment_sec=self.min_segment_sec,
+            min_gain=self.min_gain,
         )
         scores = boundary_scores(motion)
 

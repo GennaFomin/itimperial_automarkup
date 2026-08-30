@@ -17,13 +17,16 @@ from praxis.vocab import load_vocabulary
 def perceive(source: Path) -> Perception:
     """Один проход по кадрам: и полоса движения для таймлайна, и признаки для нарезки."""
     frames = media.gray_frames(source)
-    # Пробовали добавлять сюда карту движения по блокам — на валидационном наборе стало
-    # хуже (F1@0.5 0.605 против 0.693): сто сорок четыре шумных измерения тянут разрезы
-    # на шум. Оставлен только вид кадра.
+    # Три попытки улучшить признаки провалились на валидационном наборе: карта движения по
+    # блокам дала F1@0.5 0.605 вместо 0.715, обрезка по рабочей зоне — 0.642, сглаживание
+    # по времени — 0.700. Остался простой вид кадра целиком: дело не в признаках.
+    top, bottom, left, right = media.active_region(frames)
+    height, width = (frames.shape[1], frames.shape[2]) if len(frames) else (1, 1)
     return Perception(
         fps=float(config.MOTION_FPS),
         motion=media.motion_from_frames(frames),
         appearance=media.appearance_from_frames(frames),
+        crop=(left / width, top / height, (right - left) / width, (bottom - top) / height),
     )
 
 
@@ -38,7 +41,7 @@ def annotate_clip(
 
     # Границы уже стоят — языковая модель только называет то, что нарезано.
     namer = get_namer()
-    named = namer.name_steps(source, meta, result.steps, vocabulary)
+    named = namer.name_steps(source, meta, result.steps, vocabulary, perception.crop)
 
     return Annotation(
         video=meta,
