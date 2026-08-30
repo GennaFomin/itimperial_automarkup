@@ -41,7 +41,7 @@ def main() -> None:
                 filename=clip.name,
                 **{k: probed[k] for k in ("duration_sec", "fps", "width", "height")},
             )
-            annotation = jobs.annotate_clip(clip, meta, jobs.perceive(clip), started)
+            annotation = jobs.annotate_clip(clip, meta, jobs.perceive(clip), started).annotation
         except Exception as error:  # noqa: BLE001 — один битый файл не должен ронять прогон
             failed.append(f"{clip.name}: {error}")
             print(f"{clip.name}: ПРОПУЩЕН ({error})")

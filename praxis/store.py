@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS videos (
     annotation     TEXT,
     motion         TEXT,
     filmstrip      TEXT,
+    alternatives   TEXT,
     created_at     TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS events (
@@ -61,6 +62,11 @@ def connect() -> Iterator[sqlite3.Connection]:
 def init_db() -> None:
     with connect() as connection:
         connection.executescript(SCHEMA)
+        # Мягкая миграция: база, созданная до появления подсказок, не должна ломаться.
+        try:
+            connection.execute("ALTER TABLE videos ADD COLUMN alternatives TEXT")
+        except sqlite3.OperationalError:
+            pass
 
 
 def create_video(video_id: str, filename: str, meta: dict) -> None:

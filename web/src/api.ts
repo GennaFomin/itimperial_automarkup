@@ -23,8 +23,19 @@ export function uploadVideo(file: File): Promise<{ id: string }> {
   return fetch('/api/videos', { method: 'POST', body }).then(json<{ id: string }>)
 }
 
+export interface Alternative {
+  action: string
+  object: string | null
+}
+
 export const getAnnotation = (id: string) =>
-  fetch(`/api/videos/${id}/annotation`).then(json<{ annotation: Annotation; problems: string[] }>)
+  fetch(`/api/videos/${id}/annotation`).then(
+    json<{
+      annotation: Annotation
+      problems: string[]
+      alternatives: Record<string, Alternative[]>
+    }>,
+  )
 
 export const saveAnnotation = (id: string, annotation: Annotation) =>
   fetch(`/api/videos/${id}/annotation`, {

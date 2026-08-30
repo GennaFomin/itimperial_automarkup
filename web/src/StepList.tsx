@@ -1,4 +1,5 @@
 import { frameUrl } from './api'
+import type { Alternative } from './api'
 import { isUncertain, sortSteps } from './steps'
 import type { Step, Vocabulary } from './types'
 
@@ -15,6 +16,7 @@ interface Props {
   onDelete: (id: number) => void
   onKeyframeHere: (id: number) => void
   onVerify: (id: number, verified: boolean) => void
+  alternatives: Record<string, Alternative[]>
 }
 
 export function StepList(props: Props) {
@@ -116,6 +118,25 @@ export function StepList(props: Props) {
                 </label>
               </div>
             </div>
+
+            {selected && (props.alternatives[String(step.id)]?.length ?? 0) > 0 && (
+              <div className="hints-row">
+                <span className="muted">ещё варианты:</span>
+                {props.alternatives[String(step.id)].map((hint) => (
+                  <button
+                    key={`${hint.action}-${hint.object}`}
+                    className="hint"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      props.onUpdate(step.id, { action: hint.action, object: hint.object })
+                    }}
+                  >
+                    {hint.action}
+                    {hint.object ? ` · ${hint.object}` : ''}
+                  </button>
+                ))}
+              </div>
+            )}
 
             {selected && (
               <div className="step-actions">

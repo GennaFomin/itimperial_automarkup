@@ -65,8 +65,18 @@ function EditorBody({ record, onBack }: { record: VideoRecord; onBack: () => voi
   const [currentTime, setCurrentTime] = useState(0)
   const [selectedId, setSelectedId] = useState<number | null>(null)
 
-  const { annotation, problems, saveState, editCount, history, apply, undo, redo, save } =
-    useAnnotation(videoId)
+  const {
+    annotation,
+    problems,
+    alternatives,
+    saveState,
+    editCount,
+    history,
+    apply,
+    undo,
+    redo,
+    save,
+  } = useAnnotation(videoId)
   const { seconds, report } = useReviewTimer(videoId)
 
   useEffect(() => {
@@ -359,6 +369,7 @@ function EditorBody({ record, onBack }: { record: VideoRecord; onBack: () => voi
               onDelete={onDelete}
               onKeyframeHere={onKeyframeHere}
               onVerify={onVerify}
+              alternatives={alternatives}
             />
           )}
         </aside>

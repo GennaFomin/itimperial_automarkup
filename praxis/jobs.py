@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 import traceback
+from dataclasses import dataclass
 from pathlib import Path
 
 from praxis import config, media, store
@@ -30,9 +31,17 @@ def perceive(source: Path) -> Perception:
     )
 
 
+@dataclass
+class ClipResult:
+    """Разметка плюс подсказки редактору. Подсказки в экспорт не идут."""
+
+    annotation: Annotation
+    alternatives: dict[int, list[dict]]
+
+
 def annotate_clip(
     source: Path, meta: VideoMeta, perception: Perception, started: float | None = None
-) -> Annotation:
+) -> ClipResult:
     """Ядро разметки без веб-обвязки: используется и фоновой задачей, и пакетным прогоном."""
     started = time.perf_counter() if started is None else started
     vocabulary = load_vocabulary(config.VOCAB_PATH)
@@ -43,7 +52,7 @@ def annotate_clip(
     namer = get_namer()
     named = namer.name_steps(source, meta, result.steps, vocabulary, perception.crop)
 
-    return Annotation(
+    annotation = Annotation(
         video=meta,
         steps=named.steps,
         provenance=Provenance(
@@ -55,6 +64,7 @@ def annotate_clip(
             processing_sec=round(time.perf_counter() - started, 3),
         ),
     )
+    return ClipResult(annotation=annotation, alternatives=named.alternatives)
 
 
 def process_video(video_id: str) -> None:
@@ -81,7 +91,8 @@ def process_video(video_id: str) -> None:
         motion = [round(float(value), 4) for value in perception.motion]
         strip = media.filmstrip(source, meta.duration_sec, directory / "strip")
 
-        annotation = annotate_clip(source, meta, perception, started)
+        result = annotate_clip(source, meta, perception, started)
+        annotation = result.annotation
         elapsed = annotation.provenance.processing_sec
 
         store.update_video(
@@ -91,6 +102,7 @@ def process_video(video_id: str) -> None:
             annotation=annotation.model_dump_json(),
             motion=json.dumps(motion),
             filmstrip=json.dumps(strip),
+            alternatives=json.dumps(result.alternatives),
         )
     except Exception as error:  # noqa: BLE001 — статус задачи важнее типа ошибки
         store.update_video(

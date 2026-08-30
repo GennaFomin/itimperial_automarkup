@@ -503,3 +503,26 @@ select {
 .progress.done {
   color: #4ade80;
 }
+
+/* ── подсказки альтернатив ────────────────────────────────── */
+
+.hints-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 11px;
+}
+
+.hint {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-style: dashed;
+  color: var(--muted);
+}
+
+.hint:hover {
+  color: var(--text);
+  border-style: solid;
+}

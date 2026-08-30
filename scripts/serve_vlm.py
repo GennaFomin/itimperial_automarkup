@@ -50,7 +50,8 @@ PROMPT = """Кадры идут по порядку и показывают од
 
 Ответь ровно двумя строками. Первая — короткое наблюдение: что изменилось между первым и
 последним кадром. Вторая — только JSON:
-{{"action": "<действие из списка>", "object": "<деталь из списка>", "confidence": <0..1>}}"""
+{{"action": "<действие из списка>", "object": "<деталь из списка>", "confidence": <0..1>,
+ "alternatives": [["<второе по вероятности действие>", "<деталь>"], ["<третье>", "<деталь>"]]}}"""
 
 
 # Калибровка уверенности по измеренной точности, а не по самооценке модели.
@@ -166,11 +167,33 @@ def annotate(request: Request) -> dict:
         if action is None:
             confidence = CONFIDENCE_NONE
 
+        # Альтернативы нужны редактору: человеку быстрее выбрать из трёх подсказок,
+        # чем листать список из шестидесяти одной детали. Это прямо сокращает проверку.
+        alternatives = []
+        for candidate in answer.get("alternatives") or []:
+            if not isinstance(candidate, (list, tuple)) or len(candidate) < 2:
+                continue
+            alternative_action = closest(str(candidate[0]), request.actions)
+            if not alternative_action or alternative_action == action:
+                continue
+            allowed = (
+                request.pairs.get(alternative_action, request.objects)
+                if request.pairs
+                else request.objects
+            )
+            alternatives.append(
+                {
+                    "action": alternative_action,
+                    "object": closest(str(candidate[1]), allowed),
+                }
+            )
+
         results.append(
             {
                 "id": segment.id,
                 "action": action,
                 "object": obj,
+                "alternatives": alternatives[:3],
                 "confidence": round(max(0.0, min(confidence, 1.0)), 3),
                 "raw": text.strip()[:200],
             }

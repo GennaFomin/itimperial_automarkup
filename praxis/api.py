@@ -91,7 +91,11 @@ async def get_annotation(video_id: str) -> dict:
         raise HTTPException(409, f"разметка ещё не готова (статус: {record['status']})")
     annotation = Annotation.model_validate_json(record["annotation"])
     problems = check_annotation(annotation, load_vocabulary(config.VOCAB_PATH))
-    return {"annotation": annotation.model_dump(mode="json"), "problems": problems}
+    return {
+        "annotation": annotation.model_dump(mode="json"),
+        "problems": problems,
+        "alternatives": json.loads(record["alternatives"]) if record["alternatives"] else {},
+    }
 
 
 @app.put("/api/videos/{video_id}/annotation")

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import * as api from './api'
+import type { Alternative } from './api'
 import type { Annotation } from './types'
 
 export type SaveState = 'loading' | 'clean' | 'dirty' | 'saving' | 'error'
@@ -12,6 +13,7 @@ const HISTORY_LIMIT = 100
 export function useAnnotation(videoId: string) {
   const [annotation, setAnnotation] = useState<Annotation | null>(null)
   const [problems, setProblems] = useState<string[]>([])
+  const [alternatives, setAlternatives] = useState<Record<string, Alternative[]>>({})
   const [saveState, setSaveState] = useState<SaveState>('loading')
   const [editCount, setEditCount] = useState(0)
   const [history, setHistory] = useState({ undo: 0, redo: 0 })
@@ -33,13 +35,14 @@ export function useAnnotation(videoId: string) {
     setSaveState('loading')
     api
       .getAnnotation(videoId)
-      .then(({ annotation: loaded, problems: found }) => {
+      .then(({ annotation: loaded, problems: found, alternatives: hints }) => {
         if (cancelled) return
         current.current = loaded
         undoStack.current = []
         redoStack.current = []
         setAnnotation(loaded)
         setProblems(found)
+        setAlternatives(hints ?? {})
         setSaveState('clean')
       })
       .catch(() => !cancelled && setSaveState('error'))
@@ -99,5 +102,16 @@ export function useAnnotation(videoId: string) {
     return () => window.clearTimeout(timer.current)
   }, [saveState, annotation, save])
 
-  return { annotation, problems, saveState, editCount, history, apply, undo, redo, save }
+  return {
+    annotation,
+    problems,
+    alternatives,
+    saveState,
+    editCount,
+    history,
+    apply,
+    undo,
+    redo,
+    save,
+  }
 }

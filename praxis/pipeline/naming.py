@@ -26,6 +26,9 @@ from praxis.vocab import Vocabulary
 class NamingResult:
     steps: list[Step]
     models: dict[str, str] = field(default_factory=dict)
+    # Подсказки для редактора: {id шага: [{action, object}, ...]}. В экспорт не идут —
+    # это средство ускорить проверку, а не часть разметки.
+    alternatives: dict[int, list[dict]] = field(default_factory=dict)
 
 
 class Namer(Protocol):
@@ -155,6 +158,11 @@ class RemoteVlmNamer(HttpNamer):
 
         return NamingResult(
             steps=steps,
+            alternatives={
+                step.id: by_id[step.id].get("alternatives", [])
+                for step in steps
+                if step.id in by_id and by_id[step.id].get("alternatives")
+            },
             models={
                 "namer": "vlm",
                 "vlm": answer.get("model", config.VLM_MODEL),
@@ -223,6 +231,14 @@ class ClipNamer(HttpNamer):
 
         return NamingResult(
             steps=steps,
+            alternatives={
+                step.id: [
+                    {"action": item["action"], "object": item["object"]}
+                    for item in by_id[step.id].get("top", [])[1:4]
+                ]
+                for step in steps
+                if step.id in by_id
+            },
             models={
                 "namer": self.name,
                 "classifier": answer.get("model", ""),
