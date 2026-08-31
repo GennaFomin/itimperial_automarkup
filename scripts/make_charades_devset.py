@@ -120,6 +120,27 @@ def parse_actions(field: str, mapping: dict) -> list[tuple[float, float, str, st
     return sorted(result, key=lambda item: (item[0], item[1]))
 
 
+def label_sets(actions: list, kept: list, share: float = 0.5) -> list[list[list[str]]]:
+    """Все метки, покрывающие шаг, а не только оставленная.
+
+    Charades размечен многометочно: один интервал бывает подписан и «hold bag», и
+    «put clothes», и «tidy floor» — это три верных ответа, а не два неверных. Жадный
+    отбор непересекающихся шагов оставляет одну метку и выбрасывает остальные, и модель,
+    ответившая выброшенной, получала бы ошибку ни за что. Поэтому рядом с эталоном
+    сохраняется полный набор допустимых меток на каждый шаг.
+    """
+    result = []
+    for start, end, verb, obj in kept:
+        span = max(end - start, 1e-6)
+        allowed = {(verb, obj or "")}
+        for other_start, other_end, other_verb, other_obj in actions:
+            overlap = min(end, other_end) - max(start, other_start)
+            if overlap > share * span:
+                allowed.add((other_verb, other_obj or ""))
+        result.append(sorted([verb, obj] for verb, obj in allowed))
+    return result
+
+
 def drop_overlaps(actions: list, min_len: float) -> list:
     """Кейс требует непересекающихся шагов, а в Charades действия наложены друг на друга.
 
@@ -162,10 +183,11 @@ def main() -> None:
         # Ролики, размеченные без проверки или помеченные как мутные, нам только шумят.
         if row.get("verified") != "Yes" or int(row.get("quality") or 0) < 5:
             continue
-        steps = drop_overlaps(parse_actions(row["actions"], mapping), args.min_step)
+        actions = parse_actions(row["actions"], mapping)
+        steps = drop_overlaps(actions, args.min_step)
         if not (args.min_steps <= len(steps) <= args.max_steps):
             continue
-        chosen.append((row["id"], length, steps))
+        chosen.append((row["id"], length, steps, label_sets(actions, steps)))
         if len(chosen) >= args.clips:
             break
 
@@ -178,7 +200,8 @@ def main() -> None:
     inside = {Path(name).stem: name for name in archive.namelist() if name.endswith(".mp4")}
 
     written = 0
-    for video_id, length, steps in chosen:
+    allowed: dict[str, list] = {}
+    for video_id, length, steps, sets in chosen:
         member = inside.get(video_id)
         if member is None:
             continue
@@ -240,6 +263,7 @@ def main() -> None:
         (gt_dir / f"{video_id}.json").write_text(
             annotation.model_dump_json(indent=1), encoding="utf-8"
         )
+        allowed[video_id] = [sets[step.id] for step in annotation.steps]
         written += 1
         print(f"  {written}/{len(chosen)} {video_id}: {len(annotation.steps)} шагов", flush=True)
 
@@ -264,6 +288,9 @@ def main() -> None:
             lines.append(f"  {verb}:")
             lines.extend(f"    - {noun}" for noun in nouns)
     (args.out / "vocab_charades.yaml").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (args.out / "allowed.json").write_text(
+        json.dumps(allowed, ensure_ascii=False, indent=1), encoding="utf-8"
+    )
     print(f"\nготово: {written} роликов в {args.out}")
 
 

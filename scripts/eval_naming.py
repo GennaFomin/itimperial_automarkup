@@ -37,6 +37,11 @@ def main() -> None:
     )
     parser.add_argument("--toy-map", type=Path, help="соответствие ролик → изделие")
     parser.add_argument("--dump", type=Path, help="куда сложить пары эталон/предсказание")
+    parser.add_argument(
+        "--allowed",
+        type=Path,
+        help="наборы допустимых меток на шаг: у многометочной разметки верных ответов больше одного",
+    )
     args = parser.parse_args()
 
     full_vocabulary = load_vocabulary(config.VOCAB_PATH)
@@ -45,6 +50,10 @@ def main() -> None:
     toy_vocabularies = json.loads(args.toy_vocab.read_text(encoding="utf-8")) if args.toy_vocab else {}
     toy_of_clip = json.loads(args.toy_map.read_text(encoding="utf-8")) if args.toy_map else {}
     scoped = 0
+    # Многометочная разметка: у Charades один интервал бывает подписан и «hold bag», и
+    # «put clothes». Строгий счёт занижает точность на ровном месте, поэтому считаем оба.
+    allowed = json.loads(args.allowed.read_text(encoding="utf-8")) if args.allowed else {}
+    loose_action = loose_object = loose_pair = 0
     records: list[dict] = []
     references = sorted(args.gt.glob("*.json"))
     if args.limit:
@@ -115,6 +124,19 @@ def main() -> None:
             action_hits += got.action == expected.action
             object_hits += got.object == expected.object
             pair_hits += got.action == expected.action and got.object == expected.object
+
+            per_step = allowed.get(truth.video.id) or []
+            options = per_step[expected.id] if expected.id < len(per_step) else []
+            if options:
+                loose_action += any(got.action == verb for verb, _ in options)
+                loose_object += any((got.object or "") == noun for _, noun in options)
+                loose_pair += any(
+                    got.action == verb and (got.object or "") == noun for verb, noun in options
+                )
+            else:
+                loose_action += got.action == expected.action
+                loose_object += got.object == expected.object
+                loose_pair += got.action == expected.action and got.object == expected.object
             if args.show:
                 mark = "✓" if got.action == expected.action else " "
                 print(
@@ -139,6 +161,11 @@ def main() -> None:
     print(f"точность действия: {action_hits / total:.3f}")
     print(f"точность объекта:  {object_hits / total:.3f}")
     print(f"точность пары:     {pair_hits / total:.3f}  (цель кейса — 0.80)")
+    if allowed:
+        print("\nс учётом всех допустимых меток на шаг (разметка многометочная):")
+        print(f"точность действия: {loose_action / total:.3f}")
+        print(f"точность объекта:  {loose_object / total:.3f}")
+        print(f"точность пары:     {loose_pair / total:.3f}")
     print("\nчто модель предсказывает чаще всего:")
     for action, count in predicted_actions.most_common(5):
         print(f"  {action}: {count}")
