@@ -91,6 +91,9 @@ VIDEO_BASE_URL = os.getenv("PRAXIS_VIDEO_BASE_URL", "")
 # самообучаемые. Ровно поэтому работы по temporal action segmentation стоят на I3D.
 VIDEO_MODEL = os.getenv("PRAXIS_VIDEO_MODEL", "timesformer")
 VIDEO_WINDOW = int(os.getenv("PRAXIS_VIDEO_WINDOW", "16"))
+# Шаг 2 (сетка 8 Гц вместо 4) измерен на 60 роликах Charades: F1@0.5 0.466 против 0.452,
+# границы 1.46 с против 1.63 с, но F1@0.25 0.756 против 0.783 — всё внутри доверительного
+# интервала, а счёт признаков дороже на 63% (854 с против 522 с). Оставлен шаг 4.
 VIDEO_STRIDE = int(os.getenv("PRAXIS_VIDEO_STRIDE", "4"))
 VIDEO_FPS = float(os.getenv("PRAXIS_VIDEO_FPS", "16"))
 # Сколько главных компонент оставлять от признаков. Ноль — не сжимать.

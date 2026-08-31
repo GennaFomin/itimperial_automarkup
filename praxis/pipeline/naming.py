@@ -151,23 +151,14 @@ class HttpNamer:
                 "stage": "object",
             },
         )
-        # Действия, сочетающиеся с найденным предметом: обратный проход по парам словаря.
-        verbs_of: dict[str, list[str]] = {}
-        for verb, nouns in (vocabulary.pairs or {}).items():
-            for noun in nouns:
-                verbs_of.setdefault(noun, []).append(verb)
-
-        hints = {}
-        for item in answer.get("results", []):
-            noun = item.get("object")
-            if not noun:
-                continue
-            allowed = sorted(verbs_of.get(noun, []))
-            hints[item["id"]] = {
-                "hint_object": noun,
-                "actions": allowed if len(allowed) > 1 else None,
-            }
-        return hints
+        # Список действий под найденный предмет НЕ сужаем. Замер: сужение дало предмет
+        # 0.626 против 0.540, но пару 0.317 против 0.367 — когда предмет угадан неверно,
+        # глагол выбирается из неправильного подсписка и ошибки перемножаются.
+        return {
+            item["id"]: {"hint_object": item["object"]}
+            for item in answer.get("results", [])
+            if item.get("object")
+        }
 
     def _frames(
         self,
