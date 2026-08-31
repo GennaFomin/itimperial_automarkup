@@ -55,11 +55,23 @@ MOTION_FPS = 10
 #   gray  — усреднённые серые блоки, запасной вариант без GPU.
 FEATURES = os.getenv("PRAXIS_FEATURES", "video")
 VIDEO_BASE_URL = os.getenv("PRAXIS_VIDEO_BASE_URL", "")
+# Какую модель поднимать в сервисе признаков. Сравнение на двадцати роликах (одна сетка
+# параметров, F1 без учёта меток при IoU 0.1/0.25/0.5):
+#   timesformer  0.808 / 0.808 / 0.744, границы 1.48 с  ← выбрана
+#   swin3d       0.820 / 0.820 / 0.725, границы 1.67 с
+#   vjepa2       0.818 / 0.818 / 0.707, границы 1.88 с
+#   videomae     0.814 / 0.814 / 0.594, границы 1.74 с
+#   серые пиксели 0.805 / 0.785 / 0.715
+# Закономерность: признаки, обученные распознавать действия на Kinetics, обходят
+# самообучаемые. Ровно поэтому работы по temporal action segmentation стоят на I3D.
+VIDEO_MODEL = os.getenv("PRAXIS_VIDEO_MODEL", "timesformer")
 VIDEO_WINDOW = int(os.getenv("PRAXIS_VIDEO_WINDOW", "16"))
 VIDEO_STRIDE = int(os.getenv("PRAXIS_VIDEO_STRIDE", "4"))
 VIDEO_FPS = float(os.getenv("PRAXIS_VIDEO_FPS", "16"))
 # Сколько главных компонент оставлять от признаков. Ноль — не сжимать.
-COMPONENTS = int(os.getenv("PRAXIS_COMPONENTS", "8"))
+# Сжатие главными компонентами нужно самообучаемым признакам (V-JEPA, VideoMAE), где
+# соседние окна похожи на 0.997. Признакам, обученным на Kinetics, оно только вредит.
+COMPONENTS = int(os.getenv("PRAXIS_COMPONENTS", "0"))
 
 # Ручки сегментатора. Штраф за отрезок — главная: он задаёт гранулярность и защищает от
 # пересегментации. Значения подобраны scripts/tune.py на признаках V-JEPA 2
