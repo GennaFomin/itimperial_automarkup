@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import random
 import statistics
 from dataclasses import dataclass
 from pathlib import Path
@@ -172,6 +173,21 @@ def evaluate_annotations(items: list[tuple[Annotation, Annotation, str]]) -> dic
     def mean(values: list[float]) -> float:
         return round(statistics.fmean(values), 3) if values else 0.0
 
+    def interval(values: list[float]) -> list[float]:
+        """Границы 90% для среднего по роликам — бутстрэп с пересэмплированием роликов.
+
+        На сорока роликах разброс среднего сравним с разницей между вариантами пайплайна.
+        Без интервала легко принять шум за улучшение и закрепить в коде случайность.
+        """
+        if len(values) < 2:
+            return [mean(values), mean(values)]
+        generator = random.Random(20260901)
+        count = len(values)
+        means = sorted(
+            statistics.fmean(generator.choices(values, k=count)) for _ in range(2000)
+        )
+        return [round(means[100], 3), round(means[1900], 3)]
+
     def percentile(values: list[float], fraction: float) -> float:
         if not values:
             return 0.0
@@ -196,6 +212,10 @@ def evaluate_annotations(items: list[tuple[Annotation, Annotation, str]]) -> dic
         summary[f"f1@{threshold}_nolabel"] = mean(
             [clip[f"f1@{threshold}_nolabel"] for clip in per_clip]
         )
+    summary["ci90"] = {
+        key: interval([clip[key] for clip in per_clip])
+        for key in (f"f1@{threshold}_nolabel" for threshold in IOU_THRESHOLDS)
+    }
     return {"summary": summary, "per_clip": per_clip}
 
 

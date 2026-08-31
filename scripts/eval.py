@@ -67,11 +67,13 @@ def main() -> None:
     summary = report["summary"]
 
     print(f"\nроликов: {summary['clips']}, сопоставлено сегментов: {summary['matched_segments']}\n")
-    print(f"{'метрика':<28} {'со сверкой меток':>18} {'только нарезка':>16}")
+    print(f"{'метрика':<28} {'со сверкой меток':>18} {'только нарезка':>16}   {'90% для нарезки'}")
     for threshold in IOU_THRESHOLDS:
+        low, high = summary["ci90"][f"f1@{threshold}_nolabel"]
         print(
             f"{'step-F1 @ IoU ' + str(threshold):<28}"
             f"{summary[f'f1@{threshold}']:>18.3f}{summary[f'f1@{threshold}_nolabel']:>16.3f}"
+            f"   ({low:.3f}–{high:.3f})"
         )
     print()
     print(f"{'ошибка границ, среднее':<28}{summary['boundary_mae_sec']:>18.3f} с")
