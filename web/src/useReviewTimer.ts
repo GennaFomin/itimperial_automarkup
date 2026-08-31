@@ -10,8 +10,11 @@ const TICK_MS = 1000
  * Считаются только активные секунды: вкладка на экране и была активность за последние
  * тридцать секунд. Это число — вся доказательная база для KPI «в три раза быстрее»,
  * поэтому оно не должно расти, пока пользователь пьёт кофе.
+ *
+ * kind разделяет два замера: правку готовой разметки и разметку с нуля. Без второго
+ * числа отношение «в три раза» не с чем сравнивать.
  */
-export function useReviewTimer(videoId: string) {
+export function useReviewTimer(videoId: string, kind = 'review_seconds') {
   const [seconds, setSeconds] = useState(0)
   const lastActivity = useRef(Date.now())
   const reported = useRef(0)
@@ -39,9 +42,9 @@ export function useReviewTimer(videoId: string) {
       const delta = seconds - reported.current
       if (delta < 1) return
       reported.current = seconds
-      void api.logEvent(videoId, 'review_seconds', { seconds: Math.round(delta), ...extra })
+      void api.logEvent(videoId, kind, { seconds: Math.round(delta), ...extra })
     },
-    [seconds, videoId],
+    [seconds, videoId, kind],
   )
 
   const latest = useRef(report)

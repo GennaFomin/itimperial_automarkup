@@ -116,16 +116,19 @@ def log_event(video_id: str, kind: str, payload: dict | None = None) -> None:
         )
 
 
-def review_stats() -> dict:
-    """Сколько человек реально потратил на проверку роликов — основа для KPI «в 3 раза»."""
+def _seconds_by_video(kind: str) -> dict[str, float]:
     with connect() as connection:
         rows = connection.execute(
-            "SELECT video_id, payload FROM events WHERE kind = 'review_seconds'"
+            "SELECT video_id, payload FROM events WHERE kind = ?", (kind,)
         ).fetchall()
     per_video: dict[str, float] = {}
     for row in rows:
         seconds = float(json.loads(row["payload"]).get("seconds", 0))
         per_video[row["video_id"]] = per_video.get(row["video_id"], 0.0) + seconds
+    return per_video
+
+
+def _summarise(per_video: dict[str, float]) -> dict:
     values = sorted(per_video.values())
     if not values:
         return {"videos": 0, "total_sec": 0.0, "median_sec": 0.0, "per_video": {}}
@@ -137,6 +140,22 @@ def review_stats() -> dict:
         "median_sec": round(median, 1),
         "per_video": {key: round(value, 1) for key, value in per_video.items()},
     }
+
+
+def review_stats() -> dict:
+    """Сколько человек потратил на правку и сколько — на разметку с нуля.
+
+    Кейс требует сокращения ручной работы втрое. Одного времени правки для этого мало:
+    нужно, с чем сравнивать, поэтому редактор умеет и то и другое, а отношение медиан
+    считается здесь.
+    """
+    review = _seconds_by_video("review_seconds")
+    scratch = _seconds_by_video("scratch_seconds")
+    result = _summarise(review)
+    result["scratch"] = _summarise(scratch)
+    if result["median_sec"] and result["scratch"]["median_sec"]:
+        result["speedup"] = round(result["scratch"]["median_sec"] / result["median_sec"], 2)
+    return result
 
 
 def video_dir(video_id: str) -> Path:

@@ -78,7 +78,13 @@ function EditorBody({ record, onBack }: { record: VideoRecord; onBack: () => voi
     redo,
     save,
   } = useAnnotation(videoId)
-  const { seconds, report } = useReviewTimer(videoId)
+  // Разметка с нуля — контрольный замер для KPI «в три раза быстрее»: без времени
+  // ручной разметки отношение не с чем считать.
+  const [fromScratch, setFromScratch] = useState(false)
+  const { seconds, report } = useReviewTimer(
+    videoId,
+    fromScratch ? 'scratch_seconds' : 'review_seconds',
+  )
 
   useEffect(() => {
     void api.getVocabulary().then(setVocabulary)
@@ -164,6 +170,13 @@ function EditorBody({ record, onBack }: { record: VideoRecord; onBack: () => voi
     (id: number, verified: boolean) => mutateSteps((all) => setVerified(all, id, verified)),
     [mutateSteps],
   )
+
+  const onStartFromScratch = useCallback(() => {
+    if (!window.confirm('Убрать автоматическую разметку и размечать вручную? Это замер времени.')) return
+    report({ reason: 'switch-to-scratch' })
+    setFromScratch(true)
+    mutateSteps(() => [])
+  }, [mutateSteps, report])
 
   const onVerifyAll = useCallback(() => mutateSteps((all) => verifyAll(all)), [mutateSteps])
 
@@ -303,13 +316,20 @@ function EditorBody({ record, onBack }: { record: VideoRecord; onBack: () => voi
         <span className={`progress ${checked === steps.length && steps.length ? 'done' : ''}`}>
           проверено {checked} из {steps.length}
         </span>
+        <button
+          onClick={onStartFromScratch}
+          disabled={fromScratch}
+          title="Убрать автоматическую разметку и размечать вручную — замер для KPI"
+        >
+          с нуля
+        </button>
         <button onClick={onAddStep} title="Добавить шаг в пропуск (клавиша A)">
           + шаг
         </button>
         <button onClick={onVerifyAll} disabled={checked === steps.length} title="Подтвердить все оставшиеся шаги">
           подтвердить остальные
         </button>
-        <span className="muted">проверка: {formatTime(seconds)}</span>
+        <span className="muted">{fromScratch ? "с нуля" : "проверка"}: {formatTime(seconds)}</span>
         <span className="muted">правок: {editCount}</span>
         <button onClick={undo} disabled={!history.undo}>
           ↶
