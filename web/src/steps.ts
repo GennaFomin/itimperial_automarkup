@@ -30,24 +30,81 @@ const clampKeyframe = (step: Step): Step => {
 export const stepAt = (steps: Step[], time: number): Step | null =>
   sortSteps(steps).find((s) => time >= s.start_sec && time < s.end_sec) ?? null
 
-/** Сдвиг границы между шагом `leftId` и следующим. Соседи всегда остаются встык. */
-export function moveBoundary(steps: Step[], leftId: number, time: number): Step[] | null {
+/** Сдвиг одного края шага.
+ *
+ * Раньше края двигались парами, потому что шаги считались сплошным покрытием. Это было
+ * неверно: между действиями бывают паузы, и край должен двигаться сам по себе, упираясь
+ * только в соседний шаг.
+ */
+export function moveEdge(
+  steps: Step[],
+  id: number,
+  edge: 'start' | 'end',
+  time: number,
+  duration: number,
+): Step[] | null {
   const ordered = sortSteps(steps)
-  const index = ordered.findIndex((s) => s.id === leftId)
-  if (index < 0 || index === ordered.length - 1) return null
+  const index = ordered.findIndex((s) => s.id === id)
+  if (index < 0) return null
 
-  const left = ordered[index]
-  const right = ordered[index + 1]
-  const lower = left.start_sec + MIN_STEP
-  const upper = right.end_sec - MIN_STEP
-  if (upper < lower) return null
+  const step = ordered[index]
+  const previous = ordered[index - 1]
+  const next = ordered[index + 1]
 
-  const at = round3(Math.min(Math.max(time, lower), upper))
-  if (at === left.end_sec) return null
-
-  ordered[index] = clampKeyframe(touched({ ...left, end_sec: at }))
-  ordered[index + 1] = clampKeyframe(touched({ ...right, start_sec: at }))
+  if (edge === 'start') {
+    const lower = previous ? previous.end_sec : 0
+    const upper = step.end_sec - MIN_STEP
+    if (upper < lower) return null
+    const at = round3(Math.min(Math.max(time, lower), upper))
+    if (at === step.start_sec) return null
+    ordered[index] = clampKeyframe(touched({ ...step, start_sec: at }))
+  } else {
+    const lower = step.start_sec + MIN_STEP
+    const upper = next ? next.start_sec : duration
+    if (upper < lower) return null
+    const at = round3(Math.min(Math.max(time, lower), upper))
+    if (at === step.end_sec) return null
+    ordered[index] = clampKeyframe(touched({ ...step, end_sec: at }))
+  }
   return ordered
+}
+
+/** Новый шаг в пропуске вокруг указанного времени: модель шаг пропустила, человек добавляет. */
+export function addStep(
+  steps: Step[],
+  time: number,
+  duration: number,
+  action: string,
+): Step[] | null {
+  const ordered = sortSteps(steps)
+  const previous = [...ordered].reverse().find((s) => s.end_sec <= time)
+  const next = ordered.find((s) => s.start_sec >= time)
+
+  const lower = previous ? previous.end_sec : 0
+  const upper = next ? next.start_sec : duration
+  if (upper - lower < MIN_STEP) return null
+  if (ordered.some((s) => time > s.start_sec && time < s.end_sec)) return null
+
+  const start = round3(Math.max(lower, Math.min(time, upper - MIN_STEP)))
+  const end = round3(Math.min(upper, start + Math.max(MIN_STEP, 2)))
+  const nextId = ordered.length ? Math.max(...ordered.map((s) => s.id)) + 1 : 0
+
+  return [
+    ...ordered,
+    {
+      id: nextId,
+      level: 'coarse',
+      parent_id: null,
+      start_sec: start,
+      end_sec: end,
+      action,
+      object: null,
+      keyframe_sec: round3((start + end) / 2),
+      confidence: null,
+      source: 'manual',
+      verified: true,
+    },
+  ]
 }
 
 export function splitStep(steps: Step[], id: number, time: number): Step[] | null {
@@ -81,21 +138,13 @@ export function mergeWithNext(steps: Step[], id: number): Step[] | null {
   return ordered
 }
 
-/** Удаление шага: интервал забирает сосед, чтобы на таймлайне не появилось дыры. */
+/** Удаление шага. На его месте остаётся пропуск — это нормальное состояние разметки. */
 export function deleteStep(steps: Step[], id: number): Step[] | null {
   const ordered = sortSteps(steps)
-  if (ordered.length < 2) return null
   const index = ordered.findIndex((s) => s.id === id)
   if (index < 0) return null
-
-  const removed = ordered[index]
-  if (index > 0) {
-    ordered[index - 1] = touched({ ...ordered[index - 1], end_sec: removed.end_sec })
-  } else {
-    ordered[index + 1] = touched({ ...ordered[index + 1], start_sec: removed.start_sec })
-  }
   ordered.splice(index, 1)
-  return ordered.map(clampKeyframe)
+  return ordered
 }
 
 export function updateStep(steps: Step[], id: number, patch: Partial<Step>): Step[] {

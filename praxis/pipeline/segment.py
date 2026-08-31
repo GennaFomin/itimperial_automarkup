@@ -18,6 +18,22 @@ import numpy as np
 MIN_SEGMENT_SEC = 0.8
 
 
+def reduce_dimensions(features: np.ndarray, keep: int) -> np.ndarray:
+    """Сжатие признаков главными компонентами по самому ролику.
+
+    У эмбеддингов визуального энкодера больше тысячи измерений, и почти все они описывают
+    сцену целиком, а не то, что меняется: соседние кадры похожи на 0.997. В сумме квадратов
+    такие измерения — чистый шум, который забивает полезный сигнал. Оставляем несколько
+    направлений наибольшей изменчивости внутри ролика; так же поступают в литературе по
+    temporal action segmentation с признаками I3D и DINOv2.
+    """
+    if keep <= 0 or features.shape[1] <= keep:
+        return features
+    centred = features - features.mean(axis=0, keepdims=True)
+    _, singular, components = np.linalg.svd(centred, full_matrices=False)
+    return centred @ components[:keep].T
+
+
 def normalise(features: np.ndarray) -> np.ndarray:
     """Приводим признаки к нулевому среднему и единичной дисперсии по каждому измерению.
 
@@ -92,6 +108,7 @@ def segment(
     max_segments: int = 8,
     min_segment_sec: float = MIN_SEGMENT_SEC,
     min_gain: float = 0.0,
+    components: int = 0,
 ) -> list[tuple[int, int]]:
     """Оптимальное разбиение на отрезки. Возвращает пары индексов кадров [начало, конец).
 
@@ -108,7 +125,7 @@ def segment(
     if max_segments <= 1:
         return [(0, length)]
 
-    cost = cost_matrix(normalise(features))
+    cost = cost_matrix(normalise(reduce_dimensions(features, components)))
     scores = boundary_scores(motion)
 
     dp = np.full((max_segments + 1, length + 1), np.inf)

@@ -19,7 +19,10 @@ from __future__ import annotations
 import argparse
 import base64
 import io
+import subprocess
+import tempfile
 import time
+from pathlib import Path
 
 import torch
 import uvicorn
@@ -264,6 +267,62 @@ def classify(request: Request) -> dict:
 
     return {
         "results": results,
+        "model": state["model_id"],
+        "elapsed_sec": round(time.perf_counter() - started, 2),
+    }
+
+
+class EmbedRequest(BaseModel):
+    """Ролик целиком: декодировать и кодировать кадры дешевле здесь, чем гнать их по сети."""
+
+    video: str  # mp4 в base64
+    fps: float = 10.0
+    max_frames: int = 400
+
+
+@app.post("/embed")
+def embed(request: EmbedRequest) -> dict:
+    """Покадровые эмбеддинги визуального энкодера.
+
+    Это замена разнице соседних пикселей: сегментатору нужны признаки, в которых «человек
+    держит крышку» и «человек закручивает винт» далеки друг от друга, а два кадра одного
+    действия — близки. Разница яркостей такого не даёт в принципе, эмбеддинги дают.
+    """
+    import numpy as np
+
+    started = time.perf_counter()
+    with tempfile.TemporaryDirectory() as directory:
+        source = Path(directory) / "clip.mp4"
+        source.write_bytes(base64.b64decode(request.video))
+        pattern = Path(directory) / "f_%04d.jpg"
+        subprocess.run(
+            [
+                "ffmpeg", "-v", "error", "-i", str(source),
+                "-vf", f"fps={request.fps},scale=384:-2",
+                "-frames:v", str(request.max_frames), "-q:v", "4", str(pattern),
+            ],
+            check=True,
+        )
+        paths = sorted(Path(directory).glob("f_*.jpg"))
+        if not paths:
+            return {"embeddings": "", "count": 0, "dim": 0}
+
+        model, processor, device = state["model"], state["processor"], state["device"]
+        chunks = []
+        for start in range(0, len(paths), 64):
+            images = [Image.open(path).convert("RGB") for path in paths[start : start + 64]]
+            with torch.inference_mode():
+                inputs = processor(images=images, return_tensors="pt").to(device)
+                features = _tensor(model.get_image_features(**inputs)).float()
+                features = features / features.norm(dim=-1, keepdim=True)
+            chunks.append(features.cpu().numpy().astype(np.float16))
+
+    matrix = np.concatenate(chunks)
+    return {
+        "embeddings": base64.b64encode(matrix.tobytes()).decode(),
+        "count": int(matrix.shape[0]),
+        "dim": int(matrix.shape[1]),
+        "fps": request.fps,
         "model": state["model_id"],
         "elapsed_sec": round(time.perf_counter() - started, 2),
     }

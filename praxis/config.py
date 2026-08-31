@@ -48,13 +48,29 @@ EXPORT_VERIFIED = os.getenv("PRAXIS_EXPORT_VERIFIED", "1").lower() not in {"0", 
 FILMSTRIP_COUNT = 40
 MOTION_FPS = 10
 
+# Чем описывать кадр для сегментатора:
+#   video — окна кадров через видеоэнкодер: единственные признаки, которые видят движение,
+#           а не только содержимое кадра (нужен PRAXIS_VIDEO_BASE_URL),
+#   embed — покадровые эмбеддинги визуального энкодера (нужен PRAXIS_CLIP_BASE_URL),
+#   gray  — усреднённые серые блоки, запасной вариант без GPU.
+FEATURES = os.getenv("PRAXIS_FEATURES", "video")
+VIDEO_BASE_URL = os.getenv("PRAXIS_VIDEO_BASE_URL", "")
+VIDEO_WINDOW = int(os.getenv("PRAXIS_VIDEO_WINDOW", "16"))
+VIDEO_STRIDE = int(os.getenv("PRAXIS_VIDEO_STRIDE", "4"))
+VIDEO_FPS = float(os.getenv("PRAXIS_VIDEO_FPS", "16"))
+# Сколько главных компонент оставлять от признаков. Ноль — не сжимать.
+COMPONENTS = int(os.getenv("PRAXIS_COMPONENTS", "8"))
+
 # Ручки сегментатора. Штраф за отрезок — главная: он задаёт гранулярность и защищает от
-# пересегментации. Значения подобраны scripts/tune.py по двадцати роликам Assembly101
-# (F1@0.25 = 0.785, F1@0.5 = 0.715 без учёта меток). Минимальная длина шага намеренно
-# оставлена скромной: на этом наборе выгоднее 3.5 с, но это подгонка под его крупные шаги,
-# а гранулярность скрытого набора нам пока неизвестна.
-SEGMENT_PENALTY = float(os.getenv("PRAXIS_SEGMENT_PENALTY", "0.3"))
-BOUNDARY_WEIGHT = float(os.getenv("PRAXIS_BOUNDARY_WEIGHT", "0.2"))
+# пересегментации. Значения подобраны scripts/tune.py на признаках V-JEPA 2
+# (F1@0.1 и F1@0.25 = 0.818, F1@0.5 = 0.707 без учёта меток на двадцати роликах).
+# Минимальная длина шага намеренно оставлена скромной: подгонять её под крупные шаги
+# одного набора рискованно, гранулярность скрытого набора неизвестна.
+SEGMENT_PENALTY = float(os.getenv("PRAXIS_SEGMENT_PENALTY", "0.2"))
+BOUNDARY_WEIGHT = float(os.getenv("PRAXIS_BOUNDARY_WEIGHT", "0.1"))
 MAX_SEGMENTS = int(os.getenv("PRAXIS_MAX_SEGMENTS", "8"))
 MIN_SEGMENT_SEC = float(os.getenv("PRAXIS_MIN_SEGMENT_SEC", "1.5"))
+# Ниже какой доли среднего движения по ролику отрезок считается паузой, а не шагом.
+# Ноль отключает пропуски и возвращает сплошное покрытие таймлайна.
+IDLE_RATIO = float(os.getenv("PRAXIS_IDLE_RATIO", "0.45"))
 MERGE_GAIN = float(os.getenv("PRAXIS_MERGE_GAIN", "0"))

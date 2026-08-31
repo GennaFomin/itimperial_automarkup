@@ -130,6 +130,18 @@ def filmstrip(
     return sorted(path.name for path in out_dir.glob("strip_*.jpg"))
 
 
+def transcode_for_upload(video: Path, out: Path, height: int = 384) -> Path:
+    """Уменьшенная копия ролика для отправки на GPU-машину: мегабайты вместо десятков."""
+    _run(
+        [
+            "ffmpeg", "-y", "-v", "error", "-i", str(video),
+            "-vf", f"scale=-2:{height}", "-c:v", "libx264", "-preset", "veryfast",
+            "-crf", "30", "-pix_fmt", "yuv420p", "-an", str(out),
+        ]
+    )
+    return out
+
+
 def gray_frames(video: Path, fps: int | None = None, width: int = 64, height: int = 36) -> np.ndarray:
     """Кадры ролика в оттенках серого как матрица (кадры, высота, ширина).
 

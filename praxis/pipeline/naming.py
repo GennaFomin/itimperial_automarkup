@@ -248,6 +248,47 @@ class ClipNamer(HttpNamer):
         )
 
 
+def merge_adjacent(steps: list[Step], labelled: bool = True) -> list[Step]:
+    """Склеивает соседние шаги с одинаковой меткой.
+
+    Сегментатор работает по картинке и не знает, что два соседних куска — это одно и то же
+    действие: он видит, что кадры изменились, и режет. Понять, что «place tray» и следующий
+    «place tray» — один шаг, можно только после того, как метки проставлены. Поэтому склейка
+    живёт здесь, а не в сегментаторе.
+    """
+    # Без настоящих меток склеивать нельзя: у всех шагов стоит одна и та же заглушка,
+    # и склейка схлопнула бы весь ролик в один шаг, уничтожив заодно и нарезку.
+    if not labelled:
+        return steps
+
+    ordered = sorted(steps, key=lambda step: step.start_sec)
+    merged: list[Step] = []
+    for step in ordered:
+        previous = merged[-1] if merged else None
+        same_label = (
+            previous is not None
+            and previous.action == step.action
+            and previous.object == step.object
+            and previous.level == step.level
+            and abs(previous.end_sec - step.start_sec) < 0.05
+        )
+        if not same_label:
+            merged.append(step.model_copy())
+            continue
+
+        # Ключевой кадр берём у более длинного куска: он представительнее.
+        longer = previous if previous.duration_sec >= step.duration_sec else step
+        previous.end_sec = step.end_sec
+        previous.keyframe_sec = longer.keyframe_sec
+        previous.confidence = max(
+            previous.confidence or 0.0, step.confidence or 0.0
+        ) or None
+
+    for index, step in enumerate(merged):
+        step.id = index
+    return merged
+
+
 def get_namer() -> Namer:
     """Какой источник семантики использовать. Пустые адреса — работаем без неё."""
     choice = config.NAMER

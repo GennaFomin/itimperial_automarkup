@@ -96,3 +96,43 @@ def test_steps_keep_source_after_naming():
     namer = FakeVlm([{"id": 0, "action": "attach", "object": "wheel", "confidence": 0.7}])
     result = namer.name_steps(Path("clip.mp4"), VIDEO, steps(), load_vocabulary())
     assert result.steps[0].source is Source.auto
+
+
+def test_merges_adjacent_steps_with_the_same_label():
+    """Три подряд «place tray» — это один шаг, разрезанный по смене картинки."""
+    from praxis.pipeline.naming import merge_adjacent
+
+    parts = [
+        Step(id=0, start_sec=0.0, end_sec=1.6, action="place", object="tray", confidence=0.4),
+        Step(id=1, start_sec=1.6, end_sec=3.7, action="place", object="tray", confidence=0.4),
+        Step(id=2, start_sec=3.7, end_sec=5.2, action="place", object="tray", confidence=0.3),
+        Step(id=3, start_sec=5.2, end_sec=7.4, action="put-down", object="tray", confidence=0.4),
+    ]
+    merged = merge_adjacent(parts)
+
+    assert [(s.action, s.object) for s in merged] == [("place", "tray"), ("put-down", "tray")]
+    assert merged[0].start_sec == 0.0 and merged[0].end_sec == 5.2
+    assert [s.id for s in merged] == [0, 1], "идентификаторы должны стать подряд идущими"
+
+
+def test_keeps_different_labels_apart():
+    from praxis.pipeline.naming import merge_adjacent
+
+    parts = [
+        Step(id=0, start_sec=0.0, end_sec=2.0, action="open", object="drawer"),
+        Step(id=1, start_sec=2.0, end_sec=4.0, action="take", object="spoon"),
+    ]
+    assert len(merge_adjacent(parts)) == 2
+
+
+def test_does_not_merge_without_real_labels():
+    """Без именования у всех шагов одна заглушка — склейка схлопнула бы весь ролик."""
+    from praxis.pipeline.naming import merge_adjacent
+
+    parts = [
+        Step(id=0, start_sec=0.0, end_sec=4.0, action="inspect", object=None),
+        Step(id=1, start_sec=4.0, end_sec=9.0, action="inspect", object=None),
+        Step(id=2, start_sec=9.0, end_sec=14.0, action="inspect", object=None),
+    ]
+    assert len(merge_adjacent(parts, labelled=False)) == 3
+    assert len(merge_adjacent(parts, labelled=True)) == 1

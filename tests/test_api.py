@@ -159,8 +159,12 @@ def test_store_survives_restart(client, videos, monkeypatch):
     assert store.get_video(video_id)["status"] == "done"
 
 
-def test_real_pipeline_produces_valid_tiling(real_pipeline_client, videos):
-    """Настоящий сегментатор обязан покрыть таймлайн без дыр и без пустой разметки."""
+def test_real_pipeline_produces_valid_annotation(real_pipeline_client, videos):
+    """Шаги не пересекаются, лежат внутри ролика и никогда не отдаются пустым списком.
+
+    Сплошного покрытия таймлайна не требуется и не должно быть: между действиями бывают
+    паузы, и помечать их действием — значит выдумывать разметку.
+    """
     video_id = upload(real_pipeline_client, videos["ok"]).json()["id"]
     record = real_pipeline_client.get(f"/api/videos/{video_id}").json()
     assert record["status"] == "done", record["error"]
@@ -173,10 +177,10 @@ def test_real_pipeline_produces_valid_tiling(real_pipeline_client, videos):
     assert len(annotation.steps) <= config.MAX_SEGMENTS
 
     steps = sorted(annotation.steps, key=lambda step: step.start_sec)
-    assert steps[0].start_sec == 0.0
-    assert steps[-1].end_sec == pytest.approx(record["duration_sec"], abs=0.05)
+    assert steps[0].start_sec >= 0.0
+    assert steps[-1].end_sec <= record["duration_sec"] + 0.05
     for left, right in zip(steps, steps[1:]):
-        assert left.end_sec == pytest.approx(right.start_sec, abs=0.001), "между шагами дыра"
+        assert left.end_sec <= right.start_sec + 0.001, "шаги не должны пересекаться"
     for step in steps:
         assert step.keyframe_sec is not None
         assert step.start_sec <= step.keyframe_sec <= step.end_sec

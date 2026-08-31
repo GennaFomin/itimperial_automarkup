@@ -18,14 +18,14 @@ interface Props {
   selectedId: number | null
   onSeek: (time: number) => void
   onSelect: (id: number) => void
-  onMoveBoundary: (leftId: number, time: number) => void
+  onMoveEdge: (id: number, edge: 'start' | 'end', time: number) => void
 }
 
 export function Timeline(props: Props) {
   const { duration, steps, motion, filmstrip, candidates, currentTime, selectedId } = props
   const track = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
-  const dragging = useRef<{ leftId: number } | null>(null)
+  const dragging = useRef<{ id: number; edge: 'start' | 'end' } | null>(null)
 
   const ordered = sortSteps(steps)
   const percent = (time: number) => `${(time / duration) * 100}%`
@@ -94,17 +94,17 @@ export function Timeline(props: Props) {
     props.onSeek(timeAt(event.clientX, false))
   }
 
-  const onHandleDown = (event: React.PointerEvent, leftId: number) => {
+  const onHandleDown = (event: React.PointerEvent, id: number, edge: 'start' | 'end') => {
     event.stopPropagation()
     ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
-    dragging.current = { leftId }
+    dragging.current = { id, edge }
   }
 
   const onHandleMove = (event: React.PointerEvent) => {
     const state = dragging.current
     if (!state) return
     event.stopPropagation()
-    props.onMoveBoundary(state.leftId, timeAt(event.clientX, !event.altKey))
+    props.onMoveEdge(state.id, state.edge, timeAt(event.clientX, !event.altKey))
   }
 
   const onHandleUp = () => {
@@ -153,18 +153,20 @@ export function Timeline(props: Props) {
             </div>
           ))}
 
-          {ordered.slice(0, -1).map((step) => (
-            <div
-              key={`handle-${step.id}`}
-              className="handle"
-              style={{ left: percent(step.end_sec) }}
-              onPointerDown={(event) => onHandleDown(event, step.id)}
-              onPointerMove={onHandleMove}
-              onPointerUp={onHandleUp}
-              onPointerCancel={onHandleUp}
-              title="Перетащить границу (Alt — без магнита)"
-            />
-          ))}
+          {ordered.flatMap((step) =>
+            (['start', 'end'] as const).map((edge) => (
+              <div
+                key={`handle-${step.id}-${edge}`}
+                className="handle"
+                style={{ left: percent(edge === 'start' ? step.start_sec : step.end_sec) }}
+                onPointerDown={(event) => onHandleDown(event, step.id, edge)}
+                onPointerMove={onHandleMove}
+                onPointerUp={onHandleUp}
+                onPointerCancel={onHandleUp}
+                title="Перетащить край шага (Alt — без магнита)"
+              />
+            )),
+          )}
         </div>
 
         <div className="playhead" style={{ left: percent(currentTime) }} />

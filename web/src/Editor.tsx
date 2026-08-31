@@ -5,9 +5,10 @@ import { StepList } from './StepList'
 import { Timeline } from './Timeline'
 import { motionMinima } from './motion'
 import {
+  addStep,
   deleteStep,
   mergeWithNext,
-  moveBoundary,
+  moveEdge,
   nextUnverified,
   setVerified,
   sortSteps,
@@ -122,10 +123,17 @@ function EditorBody({ record, onBack }: { record: VideoRecord; onBack: () => voi
     [apply],
   )
 
-  const onMoveBoundary = useCallback(
-    (leftId: number, time: number) => mutateSteps((all) => moveBoundary(all, leftId, time)),
-    [mutateSteps],
+  const onMoveEdge = useCallback(
+    (id: number, edge: 'start' | 'end', time: number) =>
+      mutateSteps((all) => moveEdge(all, id, edge, time, record.duration_sec)),
+    [mutateSteps, record.duration_sec],
   )
+
+  /** Добавить шаг в пропуск: модель пропустила действие, человек его возвращает. */
+  const onAddStep = useCallback(() => {
+    const action = vocabulary?.actions[0] ?? 'action'
+    mutateSteps((all) => addStep(all, currentTime, record.duration_sec, action))
+  }, [mutateSteps, currentTime, record.duration_sec, vocabulary])
 
   const onSplit = useCallback(
     (id: number) => mutateSteps((all) => splitStep(all, id, currentTime)),
@@ -229,10 +237,13 @@ function EditorBody({ record, onBack }: { record: VideoRecord; onBack: () => voi
 
       switch (event.key.toLowerCase()) {
         case '[':
-          if (index > 0) onMoveBoundary(steps[index - 1].id, currentTime)
+          onMoveEdge(selectedId, 'start', currentTime)
           break
         case ']':
-          if (index < steps.length - 1) onMoveBoundary(steps[index].id, currentTime)
+          onMoveEdge(selectedId, 'end', currentTime)
+          break
+        case 'a':
+          onAddStep()
           break
         case 's':
           onSplit(selectedId)
@@ -264,7 +275,8 @@ function EditorBody({ record, onBack }: { record: VideoRecord; onBack: () => voi
     seek,
     undo,
     redo,
-    onMoveBoundary,
+    onMoveEdge,
+    onAddStep,
     onSplit,
     onMerge,
     onDelete,
@@ -291,6 +303,9 @@ function EditorBody({ record, onBack }: { record: VideoRecord; onBack: () => voi
         <span className={`progress ${checked === steps.length && steps.length ? 'done' : ''}`}>
           проверено {checked} из {steps.length}
         </span>
+        <button onClick={onAddStep} title="Добавить шаг в пропуск (клавиша A)">
+          + шаг
+        </button>
         <button onClick={onVerifyAll} disabled={checked === steps.length} title="Подтвердить все оставшиеся шаги">
           подтвердить остальные
         </button>
@@ -337,13 +352,15 @@ function EditorBody({ record, onBack }: { record: VideoRecord; onBack: () => voi
               selectedId={selectedId}
               onSeek={seek}
               onSelect={setSelectedId}
-              onMoveBoundary={onMoveBoundary}
+              onMoveEdge={onMoveEdge}
             />
           )}
           <div className="hints">
             space — играть · ←/→ — кадр (shift — секунда) · ↑/↓ — шаг · [ и ] — границы шага ·
-            V — проверено и дальше · Tab — следующий непроверенный · S — разделить · M — слить ·
-            K — ключевой кадр · Del — удалить · Alt при перетаскивании отключает магнит
+            V — проверено и дальше · Tab — следующий непроверенный · [ и ] — края шага ·
+            A — добавить шаг · S — разделить · M — слить · K — ключевой кадр · Del — удалить ·
+            Alt при перетаскивании отключает магнит. Промежутки между шагами — это паузы,
+            в них ничего не размечается
           </div>
           {annotation && (
             <div className="provenance">

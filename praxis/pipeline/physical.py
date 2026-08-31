@@ -29,6 +29,7 @@ class PhysicalSegmenter:
         max_segments: int | None = None,
         min_segment_sec: float | None = None,
         min_gain: float | None = None,
+        components: int | None = None,
     ) -> None:
         self.penalty = config.SEGMENT_PENALTY if penalty is None else penalty
         self.boundary_weight = (
@@ -39,6 +40,7 @@ class PhysicalSegmenter:
             config.MIN_SEGMENT_SEC if min_segment_sec is None else min_segment_sec
         )
         self.min_gain = config.MERGE_GAIN if min_gain is None else min_gain
+        self.components = config.COMPONENTS if components is None else components
 
     def run(
         self,
@@ -63,16 +65,28 @@ class PhysicalSegmenter:
             max_segments=self.max_segments,
             min_segment_sec=self.min_segment_sec,
             min_gain=self.min_gain,
+            components=self.components,
         )
         scores = boundary_scores(motion)
 
+        # Порог простоя: ролик почти всегда содержит куски, где человек ничего не делает —
+        # отходит, смотрит, ищет деталь. Помечать их действием значит выдумывать разметку,
+        # а в метрике каждый такой кусок считается лишним шагом.
+        clip_motion = float(np.mean(motion)) if len(motion) else 0.0
+        idle_threshold = clip_motion * config.IDLE_RATIO
+
         steps: list[Step] = []
         for index, (start, end) in enumerate(bounds):
-            start_sec = round(start / fps, 3)
-            end_sec = round(min(end / fps, meta.duration_sec), 3)
+            start_sec = round(max(start / fps + perception.offset, 0.0), 3)
+            end_sec = round(min(end / fps + perception.offset, meta.duration_sec), 3)
             if end_sec - start_sec < 0.4:
                 continue
+            if float(np.mean(motion[start:end])) < idle_threshold:
+                continue  # пауза, а не шаг
             keyframe = pick_keyframe(appearance, motion, start, end)
+            keyframe_sec = round(
+                min(max(keyframe / fps + perception.offset, start_sec), end_sec), 3
+            )
             steps.append(
                 Step(
                     id=index,
@@ -80,7 +94,7 @@ class PhysicalSegmenter:
                     end_sec=end_sec,
                     action=vocabulary.actions[0],
                     object=None,
-                    keyframe_sec=round(min(keyframe / fps, end_sec), 3),
+                    keyframe_sec=keyframe_sec,
                     confidence=self._confidence(appearance, scores, start, end),
                     source=Source.auto,
                 )
@@ -88,13 +102,8 @@ class PhysicalSegmenter:
 
         if not steps:
             steps = [self._whole_clip(meta, vocabulary)]
-        else:
-            # Границы отрезков округлялись по отдельности — сшиваем их встык и дотягиваем
-            # последний до конца ролика, чтобы разметка покрывала таймлайн без дыр.
-            for left, right in zip(steps, steps[1:]):
-                right.start_sec = left.end_sec
-            steps[-1].end_sec = round(meta.duration_sec, 3)
-            steps[0].start_sec = 0.0
+        for index, step in enumerate(steps):
+            step.id = index
 
         return PipelineResult(steps=steps, models=self._models())
 
