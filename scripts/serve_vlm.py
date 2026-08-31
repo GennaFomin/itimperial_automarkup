@@ -44,6 +44,18 @@ PROMPT = """Кадры идут по порядку и показывают од
  "alternatives": [["<второе по вероятности действие>", "<предмет>"], ["<третье>", "<предмет>"]]}}"""
 
 
+OBJECT_PROMPT = """Кадры идут по порядку и показывают один фрагмент видео: {domain}.
+
+Назови предмет, с которым человек что-то делает в этом фрагменте. Не действие, а предмет:
+то, что он берёт, несёт, открывает, кладёт или к чему прикасается. Если человек не занят
+никаким предметом, ответь пустой строкой.
+
+Допустимые предметы: {objects}
+
+Ответь ровно двумя строками. Первая — короткое наблюдение. Вторая — только JSON:
+{{"object": "<предмет из списка или пустая строка>", "confidence": <0..1>}}"""
+
+
 # Калибровка уверенности по измеренной точности, а не по самооценке модели.
 CONFIDENCE_BOTH = 0.4
 CONFIDENCE_ACTION_ONLY = 0.25
@@ -82,11 +94,16 @@ class Segment(BaseModel):
     # Что модель сказала про соседние шаги на первом проходе.
     previous: str | None = None
     following: str | None = None
+    # Для второй ступени: найденный предмет и суженный под него список действий.
+    hint_object: str | None = None
+    actions: list[str] | None = None
 
 
 class Request(BaseModel):
     # Подписывать ли кадры их позицией во времени: проверяется замером, поэтому флаг.
     frame_labels: bool = True
+    # "both" — спросить сразу пару; "object" — только предмет (первая ступень).
+    stage: str = "both"
     segments: list[Segment]
     actions: list[str]
     objects: list[str]
@@ -305,10 +322,23 @@ def annotate(request: Request) -> dict:
                 "Учти порядок: взятый предмет потом куда-то кладут, открытое потом закрывают,"
                 " и два соседних шага обычно разные."
             )
+        if request.stage == "object":
+            return OBJECT_PROMPT.format(
+                domain=request.domain or DEFAULT_DOMAIN,
+                objects=", ".join(request.objects),
+            )
+        # Вторая ступень: предмет уже найден, остаётся выбрать действие из тех, что с ним
+        # вообще сочетаются. Закрытый список пар сужает выбор в разы, и глагол перестаёт
+        # угадываться по общему впечатлению от сцены.
+        if segment.hint_object:
+            lines.append(
+                f"Человек работает с предметом: {segment.hint_object}."
+                " Назови действие именно над ним."
+            )
         return PROMPT.format(
             domain=request.domain or DEFAULT_DOMAIN,
-            actions=", ".join(request.actions),
-            objects=", ".join(request.objects),
+            actions=", ".join(segment.actions or request.actions),
+            objects=segment.hint_object or ", ".join(request.objects),
             context=("\n" + "\n".join(lines) + "\n") if lines else "",
         )
     started = time.perf_counter()
@@ -410,7 +440,10 @@ def annotate(request: Request) -> dict:
 
 def _apply(segment, answer: dict, request: Request, text: str) -> dict:
     """Притягиваем ответ модели к словарю и считаем уверенность."""
-    action = closest(str(answer.get("action", "")), request.actions)
+    # На второй ступени список действий сужен под найденный предмет — притягивать надо
+    # к нему, иначе сужение теряется на последнем шаге.
+    choices = segment.actions or request.actions
+    action = closest(str(answer.get("action", "")), choices)
     objects = (
         request.pairs.get(action, request.objects)
         if (request.pairs and action)
@@ -428,7 +461,7 @@ def _apply(segment, answer: dict, request: Request, text: str) -> dict:
     for candidate in answer.get("alternatives") or []:
         if not isinstance(candidate, (list, tuple)) or len(candidate) < 2:
             continue
-        alternative_action = closest(str(candidate[0]), request.actions)
+        alternative_action = closest(str(candidate[0]), choices)
         if not alternative_action or alternative_action == action:
             continue
         allowed = (

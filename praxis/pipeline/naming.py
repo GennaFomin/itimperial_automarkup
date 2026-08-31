@@ -134,6 +134,41 @@ class HttpNamer:
                     candidates.append((action, noun))
         return candidates
 
+    def _objects_first(self, frames: dict, vocabulary, base: dict) -> dict:
+        """Первая ступень: найти предмет, чтобы сузить выбор действия.
+
+        Замер показал, что глагол — узкое место: из 139 шагов пара верна в 51, а глагол
+        неверен в 65. Модель подставляет самые частые действия («walk», «put») по общему
+        впечатлению от сцены. Но словарь задаёт закрытый список сочетаний, и знание
+        предмета сокращает список действий в разы — тогда глагол выбирается из того, что
+        с этим предметом вообще делают.
+        """
+        answer = self._post(
+            "/annotate",
+            {
+                "segments": [{"id": key, "frames": value} for key, value in frames.items()],
+                **base,
+                "stage": "object",
+            },
+        )
+        # Действия, сочетающиеся с найденным предметом: обратный проход по парам словаря.
+        verbs_of: dict[str, list[str]] = {}
+        for verb, nouns in (vocabulary.pairs or {}).items():
+            for noun in nouns:
+                verbs_of.setdefault(noun, []).append(verb)
+
+        hints = {}
+        for item in answer.get("results", []):
+            noun = item.get("object")
+            if not noun:
+                continue
+            allowed = sorted(verbs_of.get(noun, []))
+            hints[item["id"]] = {
+                "hint_object": noun,
+                "actions": allowed if len(allowed) > 1 else None,
+            }
+        return hints
+
     def _frames(
         self,
         video_path: Path,
@@ -192,20 +227,27 @@ class RemoteVlmNamer(HttpNamer):
         # крупно, а не ищет его на общем плане.
         boxes = self._track(video_path, steps, crop) if config.TRACK_BASE_URL else {}
 
+        # Кадры режутся один раз: их извлечение стоит дороже, чем сам запрос, а ступеней
+        # может быть две.
+        frames = {
+            step.id: self._frames(video_path, step, boxes.get(step.id, crop)) for step in steps
+        }
+        base = {
+            "actions": vocabulary.actions,
+            "objects": vocabulary.objects,
+            "pairs": vocabulary.pairs,
+            "frame_labels": config.VLM_FRAME_LABELS,
+            "domain": config.DOMAIN or vocabulary.description or None,
+        }
+
         try:
+            hints = self._objects_first(frames, vocabulary, base) if config.VLM_TWO_STAGE else {}
             payload = {
                 "segments": [
-                    {
-                        "id": step.id,
-                        "frames": self._frames(video_path, step, boxes.get(step.id, crop)),
-                    }
+                    {"id": step.id, "frames": frames[step.id], **hints.get(step.id, {})}
                     for step in steps
                 ],
-                "actions": vocabulary.actions,
-                "objects": vocabulary.objects,
-                "pairs": vocabulary.pairs,
-                    "frame_labels": config.VLM_FRAME_LABELS,
-                "domain": config.DOMAIN or vocabulary.description or None,
+                **base,
             }
             answer = self._post("/annotate", payload)
         except (urllib.error.URLError, OSError, TimeoutError, ValueError) as error:

@@ -58,6 +58,8 @@ VLM_CONTEXT = os.getenv("PRAXIS_VLM_CONTEXT", "0").lower() not in {"0", "false",
 # Подписи кадров позицией во времени: замер на 67 сегментах не отличил их от шума,
 # решается на большом наборе.
 VLM_FRAME_LABELS = os.getenv("PRAXIS_VLM_FRAME_LABELS", "1").lower() not in {"0", "false", "no"}
+# Две ступени: сначала предмет, потом действие из тех, что с ним сочетаются.
+VLM_TWO_STAGE = os.getenv("PRAXIS_VLM_TWO_STAGE", "0").lower() not in {"0", "false", "no"}
 VLM_FRAMES = int(os.getenv("PRAXIS_VLM_FRAMES", "8"))
 VLM_FRAME_WIDTH = int(os.getenv("PRAXIS_VLM_FRAME_WIDTH", "640"))
 VLM_TIMEOUT = float(os.getenv("PRAXIS_VLM_TIMEOUT", "120"))
