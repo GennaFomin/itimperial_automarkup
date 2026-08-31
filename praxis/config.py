@@ -33,6 +33,8 @@ NAMER = os.getenv("PRAXIS_NAMER", "auto")
 CLIP_MODE = os.getenv("PRAXIS_CLIP_MODE", "factored")
 CLIP_VERB_WEIGHT = float(os.getenv("PRAXIS_CLIP_VERB_WEIGHT", "1.0"))
 CLIP_NOUN_WEIGHT = float(os.getenv("PRAXIS_CLIP_NOUN_WEIGHT", "1.0"))
+# Одна фраза, описывающая снимаемый процесс. Модель без неё не знает, что за домен.
+DOMAIN = os.getenv("PRAXIS_DOMAIN", "")
 VLM_FRAMES = int(os.getenv("PRAXIS_VLM_FRAMES", "8"))
 VLM_FRAME_WIDTH = int(os.getenv("PRAXIS_VLM_FRAME_WIDTH", "640"))
 VLM_TIMEOUT = float(os.getenv("PRAXIS_VLM_TIMEOUT", "120"))

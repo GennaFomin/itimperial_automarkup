@@ -136,6 +136,7 @@ class RemoteVlmNamer(HttpNamer):
                 "actions": vocabulary.actions,
                 "objects": vocabulary.objects,
                 "pairs": vocabulary.pairs,
+                "domain": config.DOMAIN or vocabulary.description or None,
             }
             answer = self._post("/annotate", payload)
         except (urllib.error.URLError, OSError, TimeoutError, ValueError) as error:

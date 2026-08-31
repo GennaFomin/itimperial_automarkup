@@ -17,7 +17,7 @@ import json
 import time
 from pathlib import Path
 
-from praxis import jobs
+from praxis import config, jobs
 from praxis.pipeline.naming import get_namer
 from praxis.schema import Annotation
 from praxis.vocab import Vocabulary, load_vocabulary
@@ -38,7 +38,7 @@ def main() -> None:
     parser.add_argument("--toy-map", type=Path, help="соответствие ролик → изделие")
     args = parser.parse_args()
 
-    full_vocabulary = load_vocabulary()
+    full_vocabulary = load_vocabulary(config.VOCAB_PATH)
     namer = get_namer()
 
     toy_vocabularies = json.loads(args.toy_vocab.read_text(encoding="utf-8")) if args.toy_vocab else {}
