@@ -49,6 +49,27 @@ CONFIDENCE_BOTH = 0.4
 CONFIDENCE_ACTION_ONLY = 0.25
 CONFIDENCE_NONE = 0.1
 
+# Сколько шагов кодировать за один проход. Упирается в память карты, а не в скорость.
+BATCH_SIZE = 4
+
+
+JOINT_PROMPT = """Кадры показывают один ролик, разбитый на {count} последовательных шагов: {domain}.
+
+Кадры идут по порядку. Для каждого шага дано по несколько кадров, шаги перечислены ниже с
+указанием, какие кадры к какому относятся:
+{layout}
+
+Назови, что человек делает на каждом шаге и с каким предметом. Смотри на ролик как на
+последовательность: если предмет взяли, дальше его несут и куда-то кладут; если дверцу
+открыли, позже её закроют. Соседние шаги обычно разные — если два подряд получаются
+одинаковыми, скорее всего один из них назван неверно.
+
+Допустимые действия: {actions}
+Допустимые предметы: {objects}
+
+Ответь одним JSON-массивом длиной ровно {count}, по объекту на шаг, и больше ничем:
+[{{"step": 1, "action": "...", "object": "...", "alternatives": [["...", "..."]]}}, ...]"""
+
 
 class Segment(BaseModel):
     id: int
@@ -62,6 +83,12 @@ class Request(BaseModel):
     pairs: dict[str, list[str]] | None = None
     # Одна фраза про домен: без неё модель не знает, кухня это или сборочный стол.
     domain: str | None = None
+    # Разбирать все шаги ролика одним запросом вместо пошагового. Идея была в том, чтобы
+    # модель видела последовательность целиком, но измерение показало обратное: при десятке
+    # кадров в одном запросе она теряет соответствие кадров шагам. Пара 0.149 против 0.224
+    # у пошагового разбора на кухонном наборе. Оставлено выключенным, но не выброшено:
+    # на длинных роликах с малым числом шагов может сработать иначе.
+    joint: bool = False
 
 
 app = FastAPI(title="Praxis VLM")
@@ -112,6 +139,57 @@ def health() -> dict:
     return {"ready": "model" in state, "model": state.get("model_id")}
 
 
+def _joint(request: Request) -> list[dict]:
+    """Все шаги ролика одним запросом: модель видит последовательность целиком."""
+    model, processor = state["model"], state["processor"]
+
+    images, layout, index = [], [], 1
+    for number, segment in enumerate(request.segments, start=1):
+        frames = [decode(frame) for frame in segment.frames]
+        layout.append(f"  шаг {number}: кадры {index}-{index + len(frames) - 1}")
+        index += len(frames)
+        images.extend(frames)
+
+    prompt = JOINT_PROMPT.format(
+        count=len(request.segments),
+        domain=request.domain or DEFAULT_DOMAIN,
+        layout="\n".join(layout),
+        actions=", ".join(request.actions),
+        objects=", ".join(request.objects),
+    )
+    messages = [
+        {
+            "role": "user",
+            "content": [{"type": "image", "image": image} for image in images]
+            + [{"type": "text", "text": prompt}],
+        }
+    ]
+    inputs = processor.apply_chat_template(
+        messages, add_generation_prompt=True, tokenize=True, return_dict=True, return_tensors="pt"
+    ).to(model.device)
+    with torch.inference_mode():
+        generated = model.generate(
+            **inputs, max_new_tokens=64 * len(request.segments) + 96, do_sample=False
+        )
+    text = processor.batch_decode(
+        generated[:, inputs["input_ids"].shape[1] :], skip_special_tokens=True
+    )[0]
+
+    match = re.search(r"\[.*\]", text, re.DOTALL)
+    parsed = []
+    if match:
+        try:
+            parsed = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            parsed = []
+
+    answers = []
+    for number in range(len(request.segments)):
+        item = parsed[number] if number < len(parsed) and isinstance(parsed[number], dict) else {}
+        answers.append(item)
+    return answers
+
+
 @app.post("/annotate")
 def annotate(request: Request) -> dict:
     model, processor = state["model"], state["processor"]
@@ -121,8 +199,23 @@ def annotate(request: Request) -> dict:
         objects=", ".join(request.objects),
     )
     started = time.perf_counter()
-    results = []
 
+    # Все шаги ролика уезжают в модель одной пачкой. Раньше они шли по очереди, и между
+    # запросами GPU простаивал: на ролике из семи шагов это давало более ста секунд при
+    # лимите кейса в сто двадцать.
+    if request.joint and len(request.segments) > 1:
+        parsed_answers = _joint(request)
+        results = []
+        for segment, answer in zip(request.segments, parsed_answers):
+            results.append(_apply(segment, answer, request, ""))
+        return {
+            "results": results,
+            "model": state["model_id"],
+            "elapsed_sec": round(time.perf_counter() - started, 2),
+        }
+
+    batch_size = max(1, BATCH_SIZE)
+    texts, image_groups = [], []
     for segment in request.segments:
         images = [decode(frame) for frame in segment.frames]
         messages = [
@@ -132,73 +225,75 @@ def annotate(request: Request) -> dict:
                 + [{"type": "text", "text": prompt}],
             }
         ]
-        inputs = processor.apply_chat_template(
-            messages,
-            add_generation_prompt=True,
-            tokenize=True,
-            return_dict=True,
-            return_tensors="pt",
-        ).to(model.device)
+        texts.append(processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False))
+        image_groups.append(images)
 
+    processor.tokenizer.padding_side = "left"
+    answers: list[str] = []
+    for start in range(0, len(texts), batch_size):
+        chunk_texts = texts[start : start + batch_size]
+        chunk_images = [image for group in image_groups[start : start + batch_size] for image in group]
+        inputs = processor(
+            text=chunk_texts, images=chunk_images, padding=True, return_tensors="pt"
+        ).to(model.device)
         with torch.inference_mode():
             generated = model.generate(**inputs, max_new_tokens=160, do_sample=False)
-        text = processor.batch_decode(
-            generated[:, inputs["input_ids"].shape[1] :], skip_special_tokens=True
-        )[0]
-
-        answer = parse(text)
-        action = closest(str(answer.get("action", "")), request.actions)
-        objects = (
-            request.pairs.get(action, request.objects)
-            if (request.pairs and action)
-            else request.objects
-        )
-        obj = closest(str(answer.get("object", "")), objects)
-
-        # Самооценку модели наружу не отдаём: измерено, что она ставит 0.95 и там, где
-        # ошибается, — с такой «уверенностью» триаж в редакторе перестаёт работать.
-        # Вместо неё — калибровка по фактической точности на валидационном наборе
-        # (действие 0.38, пара 0.14). Пересчитать, когда появится настоящая таксономия.
-        confidence = CONFIDENCE_BOTH if (action and obj) else CONFIDENCE_ACTION_ONLY
-        if action is None:
-            confidence = CONFIDENCE_NONE
-
-        # Альтернативы нужны редактору: человеку быстрее выбрать из трёх подсказок,
-        # чем листать список из шестидесяти одной детали. Это прямо сокращает проверку.
-        alternatives = []
-        for candidate in answer.get("alternatives") or []:
-            if not isinstance(candidate, (list, tuple)) or len(candidate) < 2:
-                continue
-            alternative_action = closest(str(candidate[0]), request.actions)
-            if not alternative_action or alternative_action == action:
-                continue
-            allowed = (
-                request.pairs.get(alternative_action, request.objects)
-                if request.pairs
-                else request.objects
+        answers.extend(
+            processor.batch_decode(
+                generated[:, inputs["input_ids"].shape[1] :], skip_special_tokens=True
             )
-            alternatives.append(
-                {
-                    "action": alternative_action,
-                    "object": closest(str(candidate[1]), allowed),
-                }
-            )
-
-        results.append(
-            {
-                "id": segment.id,
-                "action": action,
-                "object": obj,
-                "alternatives": alternatives[:3],
-                "confidence": round(max(0.0, min(confidence, 1.0)), 3),
-                "raw": text.strip()[:200],
-            }
         )
 
+    results = [
+        _apply(segment, parse(text), request, text)
+        for segment, text in zip(request.segments, answers)
+    ]
     return {
         "results": results,
         "model": state["model_id"],
         "elapsed_sec": round(time.perf_counter() - started, 2),
+    }
+
+
+def _apply(segment, answer: dict, request: Request, text: str) -> dict:
+    """Притягиваем ответ модели к словарю и считаем уверенность."""
+    action = closest(str(answer.get("action", "")), request.actions)
+    objects = (
+        request.pairs.get(action, request.objects)
+        if (request.pairs and action)
+        else request.objects
+    )
+    obj = closest(str(answer.get("object", "")), objects)
+
+    # Самооценку модели наружу не отдаём: измерено, что она ставит 0.95 и там, где
+    # ошибается, — с такой «уверенностью» триаж в редакторе перестаёт работать.
+    confidence = CONFIDENCE_BOTH if (action and obj) else CONFIDENCE_ACTION_ONLY
+    if action is None:
+        confidence = CONFIDENCE_NONE
+
+    alternatives = []
+    for candidate in answer.get("alternatives") or []:
+        if not isinstance(candidate, (list, tuple)) or len(candidate) < 2:
+            continue
+        alternative_action = closest(str(candidate[0]), request.actions)
+        if not alternative_action or alternative_action == action:
+            continue
+        allowed = (
+            request.pairs.get(alternative_action, request.objects)
+            if request.pairs
+            else request.objects
+        )
+        alternatives.append(
+            {"action": alternative_action, "object": closest(str(candidate[1]), allowed)}
+        )
+
+    return {
+        "id": segment.id,
+        "action": action,
+        "object": obj,
+        "alternatives": alternatives[:3],
+        "confidence": round(max(0.0, min(confidence, 1.0)), 3),
+        "raw": text.strip()[:200],
     }
 
 

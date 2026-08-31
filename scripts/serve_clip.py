@@ -72,6 +72,9 @@ class Request(BaseModel):
     noun_weight: float = 1.0
 
 
+# Сколько названий давать детектору за один проход. Больше — начинает склеивать фразы.
+GROUP_SIZE = 10
+
 app = FastAPI(title="Praxis SigLIP")
 state: dict = {}
 
@@ -393,6 +396,97 @@ def scores(request: ScoreRequest) -> dict:
         "model": state["model_id"],
         "elapsed_sec": round(time.perf_counter() - started, 2),
     }
+
+
+class DetectRequest(BaseModel):
+    """Какие предметы из словаря реально видны в кадрах сегмента."""
+
+    segments: list[Segment]
+    nouns: list[str]
+    top_k: int = 6
+    threshold: float = 0.15
+
+
+@app.post("/detect")
+def detect(request: DetectRequest) -> dict:
+    """Открытословарная детекция: объект должен приходить из пикселей, а не из догадки.
+
+    Языковая модель называет предмет по общему впечатлению от сцены и часто выбирает самый
+    вероятный по языку, а не тот, что в руках. Детектор отвечает на другой вопрос — что
+    вообще есть в кадре, — и его ответ можно проверить: у каждого предмета есть рамка.
+    """
+    if "detector" not in state:
+        _load_detector()
+    model, processor, device = state["detector"], state["detector_processor"], state["device"]
+
+    # Список режем на группы: при длинном промпте детектор склеивает соседние фразы
+    # («board board : cutting») и настоящий предмет тонет среди мусора.
+    groups = [
+        request.nouns[start : start + GROUP_SIZE]
+        for start in range(0, len(request.nouns), GROUP_SIZE)
+    ]
+    lowered = {noun.lower(): noun for noun in request.nouns}
+    started = time.perf_counter()
+    results = []
+
+    for segment in request.segments:
+        frames = [
+            Image.open(io.BytesIO(base64.b64decode(frame))).convert("RGB")
+            for frame in segment.frames
+        ]
+        best: dict[str, float] = {}
+        for group in groups:
+            prompt = ". ".join(group) + "."
+            with torch.inference_mode():
+                inputs = processor(
+                    images=frames, text=[prompt] * len(frames), return_tensors="pt"
+                ).to(device)
+                outputs = model(**inputs)
+            found = processor.post_process_grounded_object_detection(
+                outputs,
+                inputs.input_ids,
+                threshold=request.threshold,
+                text_threshold=request.threshold,
+                target_sizes=[image.size[::-1] for image in frames],
+            )
+            for item in found:
+                for label, score in zip(item["text_labels"], item["scores"]):
+                    # Возвращаем к словарю: детектор отдаёт фразу, иногда с довесками.
+                    text = str(label).strip().lower()
+                    name = lowered.get(text)
+                    if name is None:
+                        matches = [value for key, value in lowered.items() if key in text]
+                        name = min(matches, key=len) if matches else None
+                    if name and float(score) > best.get(name, 0.0):
+                        best[name] = float(score)
+
+        ranked = sorted(best.items(), key=lambda pair: -pair[1])[: request.top_k]
+        results.append(
+            {
+                "id": segment.id,
+                "objects": [{"object": name, "score": round(score, 3)} for name, score in ranked],
+            }
+        )
+
+    return {
+        "results": results,
+        "model": state.get("detector_id", ""),
+        "elapsed_sec": round(time.perf_counter() - started, 2),
+    }
+
+
+def _load_detector() -> None:
+    from transformers import AutoModelForZeroShotObjectDetection, AutoProcessor
+
+    model_id = "IDEA-Research/grounding-dino-base"
+    started = time.perf_counter()
+    print(f"загружаю детектор {model_id}…", flush=True)
+    state["detector_processor"] = AutoProcessor.from_pretrained(model_id)
+    state["detector"] = (
+        AutoModelForZeroShotObjectDetection.from_pretrained(model_id).to(state["device"]).eval()
+    )
+    state["detector_id"] = model_id
+    print(f"детектор готов за {time.perf_counter() - started:.1f} с", flush=True)
 
 
 def main() -> None:
