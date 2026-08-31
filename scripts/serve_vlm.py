@@ -449,7 +449,10 @@ def _apply(segment, answer: dict, request: Request, text: str) -> dict:
         if (request.pairs and action)
         else request.objects
     )
-    obj = closest(str(answer.get("object", "")), objects)
+    # Предмет с первой ступени фиксируется, а не переспрашивается: узкий вопрос «что за
+    # предмет» отвечается заметно точнее (0.626 против 0.540), но на втором проходе, где
+    # модель отвечает сразу парой, она передумывает и выигрыш теряется.
+    obj = segment.hint_object or closest(str(answer.get("object", "")), objects)
 
     # Самооценку модели наружу не отдаём: измерено, что она ставит 0.95 и там, где
     # ошибается, — с такой «уверенностью» триаж в редакторе перестаёт работать.
