@@ -75,6 +75,27 @@ class HttpNamer:
         self.frames_per_step = frames_per_step or config.VLM_FRAMES
         self.timeout = timeout or config.VLM_TIMEOUT
 
+    @staticmethod
+    def _shortlist(named: dict, vocabulary: Vocabulary) -> list[tuple[str, str]]:
+        """Гипотезы для оценки: ответ модели, её альтернативы и перекрёстные комбинации."""
+        actions, objects = [], []
+        if named.get("action"):
+            actions.append(named["action"])
+        if named.get("object"):
+            objects.append(named["object"])
+        for alternative in named.get("alternatives") or []:
+            if alternative.get("action") and alternative["action"] not in actions:
+                actions.append(alternative["action"])
+            if alternative.get("object") and alternative["object"] not in objects:
+                objects.append(alternative["object"])
+
+        candidates: list[tuple[str, str]] = []
+        for action in actions[:3]:
+            for noun in objects[:3]:
+                if vocabulary.is_valid_pair(action, noun) and (action, noun) not in candidates:
+                    candidates.append((action, noun))
+        return candidates
+
     def _frames(
         self,
         video_path: Path,
@@ -146,6 +167,45 @@ class RemoteVlmNamer(HttpNamer):
             )
 
         by_id = {item["id"]: item for item in answer.get("results", [])}
+
+        # Второй проход: модель не придумывает ответ, а оценивает короткий список гипотез.
+        # Свободная генерация заставляет её вспоминать слово из длинного списка; оценка
+        # правдоподобия превращает задачу в «сравни картинку с гипотезой», а это ей даётся
+        # заметно лучше. Список собирается из её же первого ответа и альтернатив, включая
+        # перекрёстные комбинации — так проверяются обе оси, и действие, и предмет.
+        if config.VLM_RESCORE and by_id:
+            segments = []
+            for step in steps:
+                named = by_id.get(step.id)
+                if not named:
+                    continue
+                candidates = self._shortlist(named, vocabulary)
+                if len(candidates) > 1:
+                    segments.append(
+                        {
+                            "id": step.id,
+                            "frames": self._frames(video_path, step, crop),
+                            "candidates": [list(pair) for pair in candidates],
+                        }
+                    )
+            if segments:
+                try:
+                    rescored = self._post(
+                        "/annotate",
+                        {
+                            "segments": segments,
+                            "actions": vocabulary.actions,
+                            "objects": vocabulary.objects,
+                            "pairs": vocabulary.pairs,
+                            "domain": config.DOMAIN or vocabulary.description or None,
+                            "mode": "score",
+                        },
+                    )
+                    for item in rescored.get("results", []):
+                        by_id[item["id"]] = item
+                except (urllib.error.URLError, OSError, TimeoutError, ValueError):
+                    pass  # остаёмся с результатом свободной генерации
+
         for step in steps:
             named = by_id.get(step.id)
             if not named:
@@ -219,6 +279,45 @@ class ClipNamer(HttpNamer):
             )
 
         by_id = {item["id"]: item for item in answer.get("results", [])}
+
+        # Второй проход: модель не придумывает ответ, а оценивает короткий список гипотез.
+        # Свободная генерация заставляет её вспоминать слово из длинного списка; оценка
+        # правдоподобия превращает задачу в «сравни картинку с гипотезой», а это ей даётся
+        # заметно лучше. Список собирается из её же первого ответа и альтернатив, включая
+        # перекрёстные комбинации — так проверяются обе оси, и действие, и предмет.
+        if config.VLM_RESCORE and by_id:
+            segments = []
+            for step in steps:
+                named = by_id.get(step.id)
+                if not named:
+                    continue
+                candidates = self._shortlist(named, vocabulary)
+                if len(candidates) > 1:
+                    segments.append(
+                        {
+                            "id": step.id,
+                            "frames": self._frames(video_path, step, crop),
+                            "candidates": [list(pair) for pair in candidates],
+                        }
+                    )
+            if segments:
+                try:
+                    rescored = self._post(
+                        "/annotate",
+                        {
+                            "segments": segments,
+                            "actions": vocabulary.actions,
+                            "objects": vocabulary.objects,
+                            "pairs": vocabulary.pairs,
+                            "domain": config.DOMAIN or vocabulary.description or None,
+                            "mode": "score",
+                        },
+                    )
+                    for item in rescored.get("results", []):
+                        by_id[item["id"]] = item
+                except (urllib.error.URLError, OSError, TimeoutError, ValueError):
+                    pass  # остаёмся с результатом свободной генерации
+
         for step in steps:
             named = by_id.get(step.id)
             if not named:

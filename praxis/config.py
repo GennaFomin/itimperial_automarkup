@@ -35,6 +35,12 @@ CLIP_VERB_WEIGHT = float(os.getenv("PRAXIS_CLIP_VERB_WEIGHT", "1.0"))
 CLIP_NOUN_WEIGHT = float(os.getenv("PRAXIS_CLIP_NOUN_WEIGHT", "1.0"))
 # Одна фраза, описывающая снимаемый процесс. Модель без неё не знает, что за домен.
 DOMAIN = os.getenv("PRAXIS_DOMAIN", "")
+# Второй проход: оценка правдоподобия короткого списка гипотез вместо свободной генерации.
+# Литература обещает от такой замены десятки пунктов, у нас измерение показало обратное:
+# пара 0.209 без вычитания языкового приора и 0.194 с ним против 0.224 у свободной
+# генерации, при удвоенном времени. Выключено, но оставлено: на другой модели и другом
+# словаре стоит перемерить — приём сам по себе верный.
+VLM_RESCORE = os.getenv("PRAXIS_VLM_RESCORE", "0").lower() not in {"0", "false", "no"}
 VLM_FRAMES = int(os.getenv("PRAXIS_VLM_FRAMES", "8"))
 VLM_FRAME_WIDTH = int(os.getenv("PRAXIS_VLM_FRAME_WIDTH", "640"))
 VLM_TIMEOUT = float(os.getenv("PRAXIS_VLM_TIMEOUT", "120"))

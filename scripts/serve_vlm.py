@@ -52,6 +52,9 @@ CONFIDENCE_NONE = 0.1
 # Сколько шагов кодировать за один проход. Упирается в память карты, а не в скорость.
 BATCH_SIZE = 4
 
+# Сколько кандидатов оценивать за один проход при скоринге.
+SCORE_BATCH = 8
+
 
 JOINT_PROMPT = """Кадры показывают один ролик, разбитый на {count} последовательных шагов: {domain}.
 
@@ -74,6 +77,8 @@ JOINT_PROMPT = """Кадры показывают один ролик, разб�
 class Segment(BaseModel):
     id: int
     frames: list[str]  # JPEG в base64
+    # Короткий список гипотез для режима скоринга: [[действие, предмет], ...].
+    candidates: list[list[str]] | None = None
 
 
 class Request(BaseModel):
@@ -89,6 +94,8 @@ class Request(BaseModel):
     # у пошагового разбора на кухонном наборе. Оставлено выключенным, но не выброшено:
     # на длинных роликах с малым числом шагов может сработать иначе.
     joint: bool = False
+    # generate — модель называет свободным текстом; score — оценивает готовые гипотезы.
+    mode: str = "generate"
 
 
 app = FastAPI(title="Praxis VLM")
@@ -137,6 +144,76 @@ def parse(text: str) -> dict:
 @app.get("/health")
 def health() -> dict:
     return {"ready": "model" in state, "model": state.get("model_id")}
+
+
+@torch.inference_mode()
+def _logprobs(prompts: list[str], targets: list[str], images_per_prompt: list) -> list[float]:
+    """Средний логарифм правдоподобия каждого ответа при своём промпте."""
+    model, processor = state["model"], state["processor"]
+    processor.tokenizer.padding_side = "left"
+
+    full = [prompt + target for prompt, target in zip(prompts, targets)]
+    flat_images = [image for group in images_per_prompt for image in group]
+    kwargs = {"text": full, "padding": True, "return_tensors": "pt"}
+    if flat_images:
+        kwargs["images"] = flat_images
+    inputs = processor(**kwargs).to(model.device)
+    logits = model(**inputs).logits.float().log_softmax(dim=-1)
+
+    scores = []
+    for index, target in enumerate(targets):
+        target_ids = processor.tokenizer(target, add_special_tokens=False).input_ids
+        if not target_ids:
+            scores.append(-1e9)
+            continue
+        length = len(target_ids)
+        total = sum(
+            float(logits[index, -length - 1 + step, token])
+            for step, token in enumerate(target_ids)
+        )
+        scores.append(total / length)
+    return scores
+
+
+def _score_candidates(images: list, candidates: list[tuple[str, str]], domain: str) -> list[float]:
+    """Насколько правдоподобен каждый вариант ответа с точки зрения модели.
+
+    Это другой режим работы, чем генерация. Мы не спрашиваем «что здесь происходит» и не
+    надеемся, что модель вспомнит нужное слово из списка в шестьдесят позиций. Вместо этого
+    для каждого кандидата считается, насколько вероятен именно такой ответ при этих кадрах,
+    и берётся лучший. Модель переходит из режима «вспомни» в режим «сравни картинку с
+    гипотезой», а он ей даётся заметно лучше.
+
+    Обязательная часть — вычитание языкового приора: то же правдоподобие считается БЕЗ
+    кадров, и разность показывает, сколько к ответу добавила именно картинка. Без этой
+    поправки побеждают частые в языке словосочетания, а не то, что видно.
+    """
+    question = f"На кадрах: {domain}. Одним коротким ответом назови действие и предмет."
+    prompt_with = state["processor"].apply_chat_template(
+        [
+            {
+                "role": "user",
+                "content": [{"type": "image", "image": image} for image in images]
+                + [{"type": "text", "text": question}],
+            }
+        ],
+        add_generation_prompt=True,
+        tokenize=False,
+    )
+    prompt_without = state["processor"].apply_chat_template(
+        [{"role": "user", "content": [{"type": "text", "text": question}]}],
+        add_generation_prompt=True,
+        tokenize=False,
+    )
+
+    answers = [f"{action} {noun}".strip() for action, noun in candidates]
+    scores: list[float] = []
+    for start in range(0, len(answers), SCORE_BATCH):
+        chunk = answers[start : start + SCORE_BATCH]
+        grounded = _logprobs([prompt_with] * len(chunk), chunk, [images] * len(chunk))
+        prior = _logprobs([prompt_without] * len(chunk), chunk, [])
+        scores.extend(g - p for g, p in zip(grounded, prior))
+    return scores
 
 
 def _joint(request: Request) -> list[dict]:
@@ -203,6 +280,37 @@ def annotate(request: Request) -> dict:
     # Все шаги ролика уезжают в модель одной пачкой. Раньше они шли по очереди, и между
     # запросами GPU простаивал: на ролике из семи шагов это давало более ста секунд при
     # лимите кейса в сто двадцать.
+    if request.mode == "score":
+        results = []
+        for segment in request.segments:
+            images = [decode(frame) for frame in segment.frames]
+            pairs = [
+                (pair[0], pair[1] if len(pair) > 1 else "")
+                for pair in (segment.candidates or [])
+            ] or [(action, "") for action in request.actions]
+            scored = _score_candidates(images, pairs, request.domain or DEFAULT_DOMAIN)
+            order = sorted(range(len(pairs)), key=lambda i: -scored[i])
+            best = pairs[order[0]]
+            margin = scored[order[0]] - scored[order[1]] if len(order) > 1 else 1.0
+            results.append(
+                {
+                    "id": segment.id,
+                    "action": best[0],
+                    "object": best[1] or None,
+                    "alternatives": [
+                        {"action": pairs[i][0], "object": pairs[i][1] or None} for i in order[1:4]
+                    ],
+                    # Уверенность из отрыва лидера: это настоящая мера, а не самооценка.
+                    "confidence": round(float(min(0.95, max(0.05, 0.5 + margin))), 3),
+                    "raw": f"скоринг {len(pairs)} гипотез",
+                }
+            )
+        return {
+            "results": results,
+            "model": state["model_id"],
+            "elapsed_sec": round(time.perf_counter() - started, 2),
+        }
+
     if request.joint and len(request.segments) > 1:
         parsed_answers = _joint(request)
         results = []
