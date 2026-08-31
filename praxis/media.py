@@ -212,19 +212,6 @@ def active_region(frames: np.ndarray, quantile: float = 0.8, margin: float = 0.1
     )
 
 
-def motion_field_from_frames(frames: np.ndarray, blocks: tuple[int, int] = (9, 16)) -> np.ndarray:
-    """Карта движения по блокам: где именно в кадре происходит активность.
-
-    Между шагами меняется не столько сама картинка, сколько место действия: руки уходят
-    от кучи деталей к собираемому узлу. Один лишь общий уровень движения этого не видит.
-    """
-    if len(frames) < 2:
-        return np.zeros((len(frames), blocks[0] * blocks[1]), dtype=np.float32)
-    difference = np.abs(np.diff(frames, axis=0))
-    difference = np.concatenate([difference[:1], difference])
-    return _pool(difference, blocks)
-
-
 def motion_signal(video: Path, fps: int | None = None) -> list[float]:
     """Сигнал движения для полосы под таймлайном."""
     frames = gray_frames(video, fps)

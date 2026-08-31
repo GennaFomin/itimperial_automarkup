@@ -25,7 +25,10 @@ PIPELINE = os.getenv("PRAXIS_PIPELINE", "motion-dp")
 VLM_BASE_URL = os.getenv("PRAXIS_VLM_BASE_URL", "")
 VLM_MODEL = os.getenv("PRAXIS_VLM_MODEL", "Qwen/Qwen3-VL-8B-Instruct")
 CLIP_BASE_URL = os.getenv("PRAXIS_CLIP_BASE_URL", "")
-# auto — классификатор, если он поднят, иначе генеративная модель, иначе без семантики.
+# auto — генеративная модель, если она поднята, иначе классификатор, иначе без семантики.
+# Порядок именно такой по измерению: на таксономии Assembly101 классификатор на SigLIP2
+# показал 0.06 по глаголу против 0.40 у генеративной модели. На другой таксономии стоит
+# перемерить: PRAXIS_NAMER=siglip переключает вручную.
 NAMER = os.getenv("PRAXIS_NAMER", "auto")
 CLIP_MODE = os.getenv("PRAXIS_CLIP_MODE", "factored")
 CLIP_VERB_WEIGHT = float(os.getenv("PRAXIS_CLIP_VERB_WEIGHT", "1.0"))

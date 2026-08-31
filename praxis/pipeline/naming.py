@@ -250,8 +250,8 @@ class ClipNamer(HttpNamer):
 def get_namer() -> Namer:
     """Какой источник семантики использовать. Пустые адреса — работаем без неё."""
     choice = config.NAMER
-    if choice in {"auto", "siglip"} and config.CLIP_BASE_URL:
-        return ClipNamer(config.CLIP_BASE_URL)
     if choice in {"auto", "vlm"} and config.VLM_BASE_URL:
         return RemoteVlmNamer(config.VLM_BASE_URL)
+    if choice in {"auto", "siglip"} and config.CLIP_BASE_URL:
+        return ClipNamer(config.CLIP_BASE_URL)
     return NullNamer()
