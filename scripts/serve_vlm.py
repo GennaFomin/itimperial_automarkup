@@ -34,7 +34,7 @@ PROMPT = """Кадры идут по порядку и показывают од
 Сравни первый и последний кадр и спроси себя, что изменилось: где оказался предмет, что
 открылось или закрылось, что взято в руки или отложено. Действие выбирай по этому
 изменению, а не по тому, что человек держит что-то в руках — держит он почти всегда.
-
+{context}
 Допустимые действия: {actions}
 Допустимые предметы: {objects}
 
@@ -79,6 +79,9 @@ class Segment(BaseModel):
     frames: list[str]  # JPEG в base64
     # Короткий список гипотез для режима скоринга: [[действие, предмет], ...].
     candidates: list[list[str]] | None = None
+    # Что модель сказала про соседние шаги на первом проходе.
+    previous: str | None = None
+    following: str | None = None
 
 
 class Request(BaseModel):
@@ -96,6 +99,23 @@ class Request(BaseModel):
     joint: bool = False
     # generate — модель называет свободным текстом; score — оценивает готовые гипотезы.
     mode: str = "generate"
+
+
+def frame_label(index: int, total: int) -> str:
+    """Подпись кадра.
+
+    Половина словаря EPIC — это пары, различимые только направлением времени: взять и
+    положить, открыть и закрыть. Пачка картинок без подписей не сообщает модели, где
+    начало шага, а где конец, и на таких парах она угадывает. Подпись стоит десяток
+    токенов и делает порядок явным.
+    """
+    if total == 1:
+        return "Кадр шага:"
+    if index == 0:
+        return f"Кадр 1 из {total}, начало шага:"
+    if index == total - 1:
+        return f"Кадр {total} из {total}, конец шага:"
+    return f"Кадр {index + 1} из {total}:"
 
 
 app = FastAPI(title="Praxis VLM")
@@ -270,16 +290,37 @@ def _joint(request: Request) -> list[dict]:
 @app.post("/annotate")
 def annotate(request: Request) -> dict:
     model, processor = state["model"], state["processor"]
-    prompt = PROMPT.format(
-        domain=request.domain or DEFAULT_DOMAIN,
-        actions=", ".join(request.actions),
-        objects=", ".join(request.objects),
-    )
+    def build_prompt(segment) -> str:
+        # Соседние шаги — это контекст, без которого «открыл» и «закрыл» неразличимы:
+        # у них одинаковые кадры и разный смысл, который виден только из последовательности.
+        lines = []
+        if segment.previous:
+            lines.append(f"Предыдущий шаг ролика: {segment.previous}.")
+        if segment.following:
+            lines.append(f"Следующий шаг ролика: {segment.following}.")
+        if lines:
+            lines.append(
+                "Учти порядок: взятый предмет потом куда-то кладут, открытое потом закрывают,"
+                " и два соседних шага обычно разные."
+            )
+        return PROMPT.format(
+            domain=request.domain or DEFAULT_DOMAIN,
+            actions=", ".join(request.actions),
+            objects=", ".join(request.objects),
+            context=("\n" + "\n".join(lines) + "\n") if lines else "",
+        )
     started = time.perf_counter()
 
     # Все шаги ролика уезжают в модель одной пачкой. Раньше они шли по очереди, и между
     # запросами GPU простаивал: на ролике из семи шагов это давало более ста секунд при
     # лимите кейса в сто двадцать.
+    prompt = PROMPT.format(
+        domain=request.domain or DEFAULT_DOMAIN,
+        actions=", ".join(request.actions),
+        objects=", ".join(request.objects),
+        context="",
+    )
+
     if request.mode == "score":
         results = []
         for segment in request.segments:
@@ -326,14 +367,15 @@ def annotate(request: Request) -> dict:
     texts, image_groups = [], []
     for segment in request.segments:
         images = [decode(frame) for frame in segment.frames]
-        messages = [
-            {
-                "role": "user",
-                "content": [{"type": "image", "image": image} for image in images]
-                + [{"type": "text", "text": prompt}],
-            }
-        ]
-        texts.append(processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False))
+        content = []
+        for index, image in enumerate(images):
+            content.append({"type": "text", "text": frame_label(index, len(images))})
+            content.append({"type": "image", "image": image})
+        content.append({"type": "text", "text": build_prompt(segment)})
+        messages = [{"role": "user", "content": content}]
+        texts.append(
+            processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+        )
         image_groups.append(images)
 
     processor.tokenizer.padding_side = "left"

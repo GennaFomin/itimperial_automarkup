@@ -215,7 +215,47 @@ class RemoteVlmNamer(HttpNamer):
 
         by_id = {item["id"]: item for item in answer.get("results", [])}
 
-        # Второй проход: модель не придумывает ответ, а оценивает короткий список гипотез.
+        # Второй проход с контекстом: модель переспрашивается, зная, что она же сказала про
+        # соседние шаги. «Открыл» и «закрыл» на отдельных кадрах неразличимы — их
+        # различает только порядок, и его надо дать модели явно.
+        if config.VLM_CONTEXT and len(steps) > 1 and by_id:
+            def label(step_id: int) -> str | None:
+                item = by_id.get(step_id)
+                if not item or not item.get("action"):
+                    return None
+                return f"{item['action']} {item.get('object') or ''}".strip()
+
+            ordered = sorted(steps, key=lambda step: step.start_sec)
+            segments = []
+            for index, step in enumerate(ordered):
+                segments.append(
+                    {
+                        "id": step.id,
+                        "frames": self._frames(video_path, step, crop),
+                        "previous": label(ordered[index - 1].id) if index else None,
+                        "following": (
+                            label(ordered[index + 1].id) if index + 1 < len(ordered) else None
+                        ),
+                    }
+                )
+            try:
+                second = self._post(
+                    "/annotate",
+                    {
+                        "segments": segments,
+                        "actions": vocabulary.actions,
+                        "objects": vocabulary.objects,
+                        "pairs": vocabulary.pairs,
+                        "domain": config.DOMAIN or vocabulary.description or None,
+                    },
+                )
+                for item in second.get("results", []):
+                    if item.get("action"):
+                        by_id[item["id"]] = item
+            except (urllib.error.URLError, OSError, TimeoutError, ValueError):
+                pass  # остаёмся с первым проходом
+
+        # Ещё один проход: модель не придумывает ответ, а оценивает короткий список гипотез.
         # Свободная генерация заставляет её вспоминать слово из длинного списка; оценка
         # правдоподобия превращает задачу в «сравни картинку с гипотезой», а это ей даётся
         # заметно лучше. Список собирается из её же первого ответа и альтернатив, включая
@@ -327,7 +367,47 @@ class ClipNamer(HttpNamer):
 
         by_id = {item["id"]: item for item in answer.get("results", [])}
 
-        # Второй проход: модель не придумывает ответ, а оценивает короткий список гипотез.
+        # Второй проход с контекстом: модель переспрашивается, зная, что она же сказала про
+        # соседние шаги. «Открыл» и «закрыл» на отдельных кадрах неразличимы — их
+        # различает только порядок, и его надо дать модели явно.
+        if config.VLM_CONTEXT and len(steps) > 1 and by_id:
+            def label(step_id: int) -> str | None:
+                item = by_id.get(step_id)
+                if not item or not item.get("action"):
+                    return None
+                return f"{item['action']} {item.get('object') or ''}".strip()
+
+            ordered = sorted(steps, key=lambda step: step.start_sec)
+            segments = []
+            for index, step in enumerate(ordered):
+                segments.append(
+                    {
+                        "id": step.id,
+                        "frames": self._frames(video_path, step, crop),
+                        "previous": label(ordered[index - 1].id) if index else None,
+                        "following": (
+                            label(ordered[index + 1].id) if index + 1 < len(ordered) else None
+                        ),
+                    }
+                )
+            try:
+                second = self._post(
+                    "/annotate",
+                    {
+                        "segments": segments,
+                        "actions": vocabulary.actions,
+                        "objects": vocabulary.objects,
+                        "pairs": vocabulary.pairs,
+                        "domain": config.DOMAIN or vocabulary.description or None,
+                    },
+                )
+                for item in second.get("results", []):
+                    if item.get("action"):
+                        by_id[item["id"]] = item
+            except (urllib.error.URLError, OSError, TimeoutError, ValueError):
+                pass  # остаёмся с первым проходом
+
+        # Ещё один проход: модель не придумывает ответ, а оценивает короткий список гипотез.
         # Свободная генерация заставляет её вспоминать слово из длинного списка; оценка
         # правдоподобия превращает задачу в «сравни картинку с гипотезой», а это ей даётся
         # заметно лучше. Список собирается из её же первого ответа и альтернатив, включая

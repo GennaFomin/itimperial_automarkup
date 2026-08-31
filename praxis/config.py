@@ -49,6 +49,12 @@ TRACK_BASE_URL = os.getenv("PRAXIS_TRACK_BASE_URL", "")
 TRACK_GRID = int(os.getenv("PRAXIS_TRACK_GRID", "3"))
 TRACK_MIN_SHIFT = float(os.getenv("PRAXIS_TRACK_MIN_SHIFT", "0.05"))
 TRACK_MARGIN = float(os.getenv("PRAXIS_TRACK_MARGIN", "0.35"))
+# Второй проход, где модель видит свои же ответы про соседние шаги. Выключен: замер на
+# кухонном наборе дал 0.313/0.448/0.209 против 0.358/0.463/0.224 без него, и вдвое дороже
+# (40.6 с против 15 с на ролик). Модель начинает подгонять шаг под правдоподобную
+# последовательность вместо того, что видит в кадре, — «закрыл» после «открыл» она
+# дописывает по логике рассказа.
+VLM_CONTEXT = os.getenv("PRAXIS_VLM_CONTEXT", "0").lower() not in {"0", "false", "no"}
 VLM_FRAMES = int(os.getenv("PRAXIS_VLM_FRAMES", "8"))
 VLM_FRAME_WIDTH = int(os.getenv("PRAXIS_VLM_FRAME_WIDTH", "640"))
 VLM_TIMEOUT = float(os.getenv("PRAXIS_VLM_TIMEOUT", "120"))

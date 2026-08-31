@@ -36,6 +36,7 @@ def main() -> None:
         help="словари изделий: кандидаты сужаются до пар, возможных для этой игрушки",
     )
     parser.add_argument("--toy-map", type=Path, help="соответствие ролик → изделие")
+    parser.add_argument("--dump", type=Path, help="куда сложить пары эталон/предсказание")
     args = parser.parse_args()
 
     full_vocabulary = load_vocabulary(config.VOCAB_PATH)
@@ -44,6 +45,7 @@ def main() -> None:
     toy_vocabularies = json.loads(args.toy_vocab.read_text(encoding="utf-8")) if args.toy_vocab else {}
     toy_of_clip = json.loads(args.toy_map.read_text(encoding="utf-8")) if args.toy_map else {}
     scoped = 0
+    records: list[dict] = []
     references = sorted(args.gt.glob("*.json"))
     if args.limit:
         references = references[: args.limit]
@@ -96,6 +98,18 @@ def main() -> None:
 
         for expected, got in zip(truth.steps, named):
             total += 1
+            records.append(
+                {
+                    "clip": truth.video.id,
+                    "start": expected.start_sec,
+                    "end": expected.end_sec,
+                    "true_action": expected.action,
+                    "true_object": expected.object,
+                    "action": got.action,
+                    "object": got.object,
+                    "confidence": got.confidence,
+                }
+            )
             predicted_actions[got.action] += 1
             unparsed += got.action == "?"
             action_hits += got.action == expected.action
@@ -128,6 +142,20 @@ def main() -> None:
     print("\nчто модель предсказывает чаще всего:")
     for action, count in predicted_actions.most_common(5):
         print(f"  {action}: {count}")
+
+    # Куда именно уходит точность: без этого улучшать нечего — видно только итог.
+    confusions = collections.Counter(
+        (item["true_action"], item["action"])
+        for item in records
+        if item["true_action"] != item["action"]
+    )
+    print("\nчаще всего путает (эталон → модель):")
+    for (expected_action, got_action), count in confusions.most_common(8):
+        print(f"  {expected_action} → {got_action}: {count}")
+
+    if args.dump:
+        args.dump.write_text(json.dumps(records, ensure_ascii=False, indent=1), encoding="utf-8")
+        print(f"\nпредсказания сохранены: {args.dump}")
 
 
 if __name__ == "__main__":
