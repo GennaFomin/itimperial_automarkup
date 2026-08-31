@@ -204,6 +204,7 @@ class RemoteVlmNamer(HttpNamer):
                 "actions": vocabulary.actions,
                 "objects": vocabulary.objects,
                 "pairs": vocabulary.pairs,
+                    "frame_labels": config.VLM_FRAME_LABELS,
                 "domain": config.DOMAIN or vocabulary.description or None,
             }
             answer = self._post("/annotate", payload)

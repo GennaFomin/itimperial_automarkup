@@ -100,7 +100,7 @@ def parse_actions(field: str, mapping: dict) -> list[tuple[float, float, str, st
             continue
         verb, obj = mapping[parts[0]]
         result.append((float(parts[1]), float(parts[2]), verb, None if obj == "None" else obj))
-    return sorted(result)
+    return sorted(result, key=lambda item: (item[0], item[1]))
 
 
 def drop_overlaps(actions: list, min_len: float) -> list:

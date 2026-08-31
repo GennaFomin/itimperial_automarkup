@@ -85,6 +85,8 @@ class Segment(BaseModel):
 
 
 class Request(BaseModel):
+    # Подписывать ли кадры их позицией во времени: проверяется замером, поэтому флаг.
+    frame_labels: bool = True
     segments: list[Segment]
     actions: list[str]
     objects: list[str]
@@ -369,7 +371,8 @@ def annotate(request: Request) -> dict:
         images = [decode(frame) for frame in segment.frames]
         content = []
         for index, image in enumerate(images):
-            content.append({"type": "text", "text": frame_label(index, len(images))})
+            if request.frame_labels:
+                content.append({"type": "text", "text": frame_label(index, len(images))})
             content.append({"type": "image", "image": image})
         content.append({"type": "text", "text": build_prompt(segment)})
         messages = [{"role": "user", "content": content}]
