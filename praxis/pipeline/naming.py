@@ -75,6 +75,44 @@ class HttpNamer:
         self.frames_per_step = frames_per_step or config.VLM_FRAMES
         self.timeout = timeout or config.VLM_TIMEOUT
 
+    def _track(
+        self,
+        video_path: Path,
+        steps: list[Step],
+        fallback: tuple[float, float, float, float] | None,
+    ) -> dict[int, tuple[float, float, float, float]]:
+        """Рамка движущегося предмета на каждый шаг. При отказе трекера — общая зона."""
+        try:
+            answer = self._post(
+                "/track",
+                {
+                    "segments": [
+                        {"id": step.id, "frames": self._frames(video_path, step, None, width=512)}
+                        for step in steps
+                    ],
+                    "grid": config.TRACK_GRID,
+                },
+                base_url=config.TRACK_BASE_URL,
+            )
+        except (urllib.error.URLError, OSError, TimeoutError, ValueError):
+            return {}
+
+        boxes: dict[int, tuple[float, float, float, float]] = {}
+        for item in answer.get("results", []):
+            box = item.get("box")
+            if not box or item.get("shift", 0.0) < config.TRACK_MIN_SHIFT:
+                continue
+            left, top, width, height = box
+            # Расширяем рамку: предмет полезнее видеть вместе с руками и опорой.
+            margin = config.TRACK_MARGIN
+            left = max(0.0, left - width * margin)
+            top = max(0.0, top - height * margin)
+            width = min(1.0 - left, width * (1 + 2 * margin))
+            height = min(1.0 - top, height * (1 + 2 * margin))
+            if width > 0.05 and height > 0.05:
+                boxes[item["id"]] = (left, top, width, height)
+        return boxes
+
     @staticmethod
     def _shortlist(named: dict, vocabulary: Vocabulary) -> list[tuple[str, str]]:
         """Гипотезы для оценки: ответ модели, её альтернативы и перекрёстные комбинации."""
@@ -101,6 +139,7 @@ class HttpNamer:
         video_path: Path,
         step: Step,
         crop: tuple[float, float, float, float] | None = None,
+        width: int | None = None,
     ) -> list[str]:
         """Кадры, равномерно разбросанные внутри шага, плюс его ключевой кадр."""
         span = step.end_sec - step.start_sec
@@ -116,14 +155,14 @@ class HttpNamer:
             for index, at in enumerate(sorted(set(round(value, 2) for value in offsets))):
                 path = Path(directory) / f"{index}.jpg"
                 media.extract_frame(
-                    video_path, at, path, width=config.VLM_FRAME_WIDTH, crop=crop
+                    video_path, at, path, width=width or config.VLM_FRAME_WIDTH, crop=crop
                 )
                 encoded.append(base64.b64encode(path.read_bytes()).decode())
         return encoded
 
-    def _post(self, path: str, payload: dict) -> dict:
+    def _post(self, path: str, payload: dict, base_url: str | None = None) -> dict:
         request = urllib.request.Request(
-            self.base_url + path,
+            (base_url.rstrip("/") if base_url else self.base_url) + path,
             data=json.dumps(payload).encode(),
             headers={"Content-Type": "application/json"},
             method="POST",
@@ -148,10 +187,18 @@ class RemoteVlmNamer(HttpNamer):
         if not steps:
             return NamingResult(steps=steps, models={"namer": "vlm", "namer_status": "нет шагов"})
 
+        # Область предмета от трекера, если он поднят: кадры для каждого шага режутся по
+        # своей рамке, а не по общей рабочей зоне. Языковая модель тогда смотрит на предмет
+        # крупно, а не ищет его на общем плане.
+        boxes = self._track(video_path, steps, crop) if config.TRACK_BASE_URL else {}
+
         try:
             payload = {
                 "segments": [
-                    {"id": step.id, "frames": self._frames(video_path, step, crop)}
+                    {
+                        "id": step.id,
+                        "frames": self._frames(video_path, step, boxes.get(step.id, crop)),
+                    }
                     for step in steps
                 ],
                 "actions": vocabulary.actions,

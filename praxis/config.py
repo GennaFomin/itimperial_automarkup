@@ -41,6 +41,14 @@ DOMAIN = os.getenv("PRAXIS_DOMAIN", "")
 # генерации, при удвоенном времени. Выключено, но оставлено: на другой модели и другом
 # словаре стоит перемерить — приём сам по себе верный.
 VLM_RESCORE = os.getenv("PRAXIS_VLM_RESCORE", "0").lower() not in {"0", "false", "no"}
+# Трекер предмета (SAM2). Пусто — кадры режутся по общей рабочей зоне.
+# Замысел был в том, чтобы показывать модели предмет крупно. Измерение на кухонном наборе:
+# 0.209 / 0.179 / 0.090 против 0.358 / 0.463 / 0.224 без трекера. Кроп по предмету убирает
+# контекст, без которого предмет не опознать, а рамка часто захватывает не то. Выключено.
+TRACK_BASE_URL = os.getenv("PRAXIS_TRACK_BASE_URL", "")
+TRACK_GRID = int(os.getenv("PRAXIS_TRACK_GRID", "3"))
+TRACK_MIN_SHIFT = float(os.getenv("PRAXIS_TRACK_MIN_SHIFT", "0.05"))
+TRACK_MARGIN = float(os.getenv("PRAXIS_TRACK_MARGIN", "0.35"))
 VLM_FRAMES = int(os.getenv("PRAXIS_VLM_FRAMES", "8"))
 VLM_FRAME_WIDTH = int(os.getenv("PRAXIS_VLM_FRAME_WIDTH", "640"))
 VLM_TIMEOUT = float(os.getenv("PRAXIS_VLM_TIMEOUT", "120"))
