@@ -70,6 +70,23 @@ class RemoteFile(io.RawIOBase):
         return len(data)
 
 
+def content_crop(path: Path) -> str | None:
+    """Рамка полезного кадра.
+
+    Часть Charades снята телефоном вертикально и уложена в горизонтальный контейнер:
+    половина кадра — чёрные поля. И видеоэнкодер, и языковая модель тратят на них
+    разрешение впустую, поэтому поля срезаются. Для обычной съёмки cropdetect вернёт
+    весь кадр, и обрезка ничего не изменит.
+    """
+    probe = subprocess.run(
+        ["ffmpeg", "-v", "info", "-i", str(path), "-vf", "cropdetect=24:2:0",
+         "-frames:v", "60", "-f", "null", "-"],
+        capture_output=True, text=True,
+    )
+    found = [line for line in probe.stderr.splitlines() if "crop=" in line]
+    return found[-1].split("crop=")[-1].strip() if found else None
+
+
 def taxonomy(root: Path) -> tuple[dict[str, tuple[str, str]], list[str], list[str]]:
     """Класс действия → (глагол, предмет), плюс полные списки для словаря."""
     verbs = {
@@ -170,10 +187,12 @@ def main() -> None:
             with archive.open(member) as source, tempfile.NamedTemporaryFile(suffix=".mp4") as raw:
                 raw.write(source.read())
                 raw.flush()
+                crop = content_crop(Path(raw.name))
+                chain = f"crop={crop}," if crop else ""
                 # Кейс требует не меньше 720p, а Charades роздан в 480 — поднимаем по высоте.
                 subprocess.run(
                     ["ffmpeg", "-v", "error", "-y", "-i", raw.name,
-                     "-vf", "scale=-2:720", "-c:v", "libx264", "-preset", "veryfast",
+                     "-vf", f"{chain}scale=-2:720", "-c:v", "libx264", "-preset", "veryfast",
                      "-crf", "20", "-an", str(target)],
                     check=True,
                 )
