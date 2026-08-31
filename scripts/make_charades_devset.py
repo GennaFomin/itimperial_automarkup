@@ -224,21 +224,27 @@ def main() -> None:
         written += 1
         print(f"  {written}/{len(chosen)} {video_id}: {len(annotation.steps)} шагов", flush=True)
 
-    vocabulary = {
-        "name": "charades",
-        "description": "человек занят бытовыми делами дома",
-        "actions": all_verbs,
-        "objects": all_objects,
-    }
-    (args.out / "vocab_charades.yaml").write_text(
-        "\n".join(
-            [f"name: {vocabulary['name']}", f"description: {vocabulary['description']}", "actions:"]
-            + [f"  - {verb}" for verb in all_verbs]
-            + ["objects:"]
-            + [f"  - {obj}" for obj in all_objects]
-        ) + "\n",
-        encoding="utf-8",
-    )
+    # Допустимые пары, а не декартово произведение: в Charades осмысленных сочетаний 157
+    # из 1254 возможных. Закрытый список пар — ровно то, что выдаёт заказчик разметки,
+    # и он же не даёт модели предложить «помыть диван».
+    grouped: dict[str, list[str]] = {}
+    for verb, obj in mapping.values():
+        grouped.setdefault(verb, []).append(obj if obj != "None" else "")
+    lines = [
+        "name: charades",
+        "description: человек занят бытовыми делами дома",
+        "actions:",
+        *(f"  - {verb}" for verb in all_verbs),
+        "objects:",
+        *(f"  - {obj}" for obj in all_objects),
+        "pairs:",
+    ]
+    for verb in sorted(grouped):
+        nouns = sorted({noun for noun in grouped[verb] if noun})
+        if nouns:
+            lines.append(f"  {verb}:")
+            lines.extend(f"    - {noun}" for noun in nouns)
+    (args.out / "vocab_charades.yaml").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"\nготово: {written} роликов в {args.out}")
 
 
