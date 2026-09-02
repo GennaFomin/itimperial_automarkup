@@ -250,3 +250,27 @@ def test_contract_export_matches_the_published_shape(client, videos):
 
     header = client.get(f"/api/videos/{video_id}/export.csv").text.splitlines()[0]
     assert header == "start_ms,end_ms,action,object,keyframe_ms,confidence,model_version"
+
+
+def test_unavailable_feature_service_is_reported_not_hidden(tmp_path, monkeypatch, videos):
+    """Прогон без GPU обязан признаться, что просел, а не выглядеть успешным.
+
+    На финале это разница между честным демо и демо, которое «работает» и тихо отдаёт
+    нарезку на серых блоках.
+    """
+    monkeypatch.setattr(config, "WORK_DIR", tmp_path / "work")
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "work" / "praxis.db")
+    monkeypatch.setattr(config, "PIPELINE", "motion-dp")
+    monkeypatch.setattr(config, "FEATURES", "video")
+    monkeypatch.setattr(config, "VIDEO_BASE_URL", "http://127.0.0.1:9")  # порт закрыт всегда
+
+    with TestClient(app=_app()) as client:
+        video_id = upload(client, videos["ok"]).json()["id"]
+        record = client.get(f"/api/videos/{video_id}").json()
+
+    assert record["status"] == "done", "деградация не должна ронять прогон"
+    assert record["warnings"], "но и молчать о ней нельзя"
+    assert "признак" in record["warnings"][0].lower()
+
+    provenance = Annotation.model_validate_json(store.get_video(video_id)["prediction"]).provenance
+    assert provenance.warnings == record["warnings"], "то же самое обязано быть в экспорте"

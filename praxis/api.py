@@ -54,6 +54,8 @@ def _public(record: dict) -> dict:
         "height": record["height"],
         "status": record["status"],
         "error": record["error"],
+        # Прогон мог пройти не в полную силу — это не ошибка, но и не тишина.
+        "warnings": json.loads(record["warnings"]) if record["warnings"] else [],
         "processing_sec": record["processing_sec"],
         # Правил ли человек этот ролик: прогноз при этом остаётся на месте.
         "reviewed": bool(record["review"]),

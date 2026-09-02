@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS videos (
     processing_sec REAL,
     prediction     TEXT,
     review         TEXT,
+    warnings       TEXT,
     motion         TEXT,
     filmstrip      TEXT,
     alternatives   TEXT,
@@ -75,6 +76,7 @@ def init_db() -> None:
             "ALTER TABLE videos ADD COLUMN alternatives TEXT",
             "ALTER TABLE videos ADD COLUMN prediction TEXT",
             "ALTER TABLE videos ADD COLUMN review TEXT",
+            "ALTER TABLE videos ADD COLUMN warnings TEXT",
             "UPDATE videos SET prediction = annotation WHERE prediction IS NULL",
             "ALTER TABLE videos DROP COLUMN annotation",
         ):

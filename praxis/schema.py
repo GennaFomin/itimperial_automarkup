@@ -100,6 +100,9 @@ class Provenance(BaseModel):
     models: dict[str, str] = Field(default_factory=dict)
     backend: str | None = None
     processing_sec: float | None = Field(default=None, ge=0)
+    # Прогон прошёл, но не в полную силу: сервис признаков или именования был недоступен.
+    # Без этого списка деградировавший прогон выглядит как успешный.
+    warnings: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 

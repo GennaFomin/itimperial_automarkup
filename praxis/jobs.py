@@ -110,6 +110,12 @@ def perceive(source: Path) -> Perception:
     fps = float(config.MOTION_FPS)
     offset = 0.0
 
+    # Признаки заказаны, но сервис не ответил — дальше будет заметно хуже, и это надо
+    # донести до прогона, а не спрятать в тихий фолбэк.
+    wanted_remote = (config.FEATURES == "video" and config.VIDEO_BASE_URL) or (
+        config.FEATURES == "embed" and config.CLIP_BASE_URL
+    )
+
     video = _video_features(source)
     if video is not None:
         appearance = video["matrix"]
@@ -131,6 +137,14 @@ def perceive(source: Path) -> Perception:
         appearance, motion = appearance[:length], motion[:length]
     else:
         appearance = media.appearance_from_frames(frames)
+        degraded = ("сервис признаков недоступен: нарезка на серых блоках",) if wanted_remote else ()
+        return Perception(
+            fps=fps,
+            motion=motion,
+            appearance=appearance,
+            crop=_crop(frames),
+            degraded=degraded,
+        )
     # Три попытки улучшить признаки провалились на валидационном наборе: карта движения по
     # блокам дала F1@0.5 0.605 вместо 0.715, обрезка по рабочей зоне — 0.642, сглаживание
     # по времени — 0.700. Остался простой вид кадра целиком: дело не в признаках.
@@ -171,6 +185,11 @@ def annotate_clip(
     labelled = named.models.get("namer") not in {None, "none"} and "namer_status" not in named.models
     steps = merge_adjacent(named.steps, labelled=labelled)
 
+    # Всё, что просело в этом прогоне, собирается в одном месте и уезжает в происхождение.
+    warnings = list(perception.degraded)
+    if named.models.get("namer_status"):
+        warnings.append(f"именование: {named.models['namer_status']}")
+
     annotation = Annotation(
         video=meta,
         steps=steps,
@@ -181,6 +200,7 @@ def annotate_clip(
             models={**result.models, **named.models},
             backend=config.VLM_BASE_URL or "local",
             processing_sec=round(time.perf_counter() - started, 3),
+            warnings=warnings,
         ),
     )
     return ClipResult(
@@ -220,6 +240,7 @@ def process_video(video_id: str) -> None:
         store.update_video(
             video_id,
             status="done",
+            warnings=json.dumps(annotation.provenance.warnings, ensure_ascii=False),
             processing_sec=elapsed,
             prediction=annotation.model_dump_json(),
             motion=json.dumps(motion),
