@@ -170,6 +170,17 @@ def closest(value: str, allowed: list[str]) -> str | None:
     return min(contained, key=len) if contained else None
 
 
+def parse_nested(text: str) -> dict:
+    """Разбор вложенного ответа: у parse() шаблон без вложенности, а тут список внутри."""
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end <= start:
+        return {}
+    try:
+        return json.loads(text[start : end + 1])
+    except json.JSONDecodeError:
+        return {}
+
+
 def parse(text: str) -> dict:
     matches = re.findall(r"\{[^{}]*\}", text, re.DOTALL)
     for candidate in reversed(matches):
@@ -483,6 +494,161 @@ def _apply(segment, answer: dict, request: Request, text: str) -> dict:
         "alternatives": alternatives[:3],
         "confidence": round(max(0.0, min(confidence, 1.0)), 3),
         "raw": text.strip()[:200],
+    }
+
+
+
+SEGMENT_PROMPT = """Кадры одного видео идут по порядку, под каждым подписано его время в
+секундах от начала: {domain}.
+
+Раздели видео на последовательные шаги — законченные действия человека. Границу ставь в
+момент, когда одно действие закончилось и началось следующее. Между шагами могут быть
+паузы, когда человек ничего не делает: такие промежутки в шаги не включай.
+
+Допустимые действия: {actions}
+Допустимые предметы: {objects}
+
+Ответь только JSON без пояснений:
+{{"steps": [{{"start_sec": <число>, "end_sec": <число>, "action": "<из списка>",
+ "object": "<из списка>"}}]}}"""
+
+
+COMPARE_PROMPT = """Два кадра одного видео: {domain}. Первый снят в {left:.1f} с, второй в
+{right:.1f} с.
+
+Вопрос один: человек всё это время занят ОДНИМ И ТЕМ ЖЕ действием, или между этими
+моментами одно действие закончилось и началось другое?
+
+Ответь только JSON: {{"changed": true|false}}"""
+
+
+class SegmentRequest(BaseModel):
+    frames: list[str]  # JPEG в base64, по порядку
+    times: list[float]  # момент каждого кадра в секундах
+    actions: list[str]
+    objects: list[str]
+    domain: str | None = None
+
+
+class Pair(BaseModel):
+    left: str
+    right: str
+    left_sec: float
+    right_sec: float
+
+
+class CompareRequest(BaseModel):
+    pairs: list[Pair]
+    domain: str | None = None
+
+
+@app.post("/segment")
+@torch.inference_mode()
+def segment(request: SegmentRequest) -> dict:
+    """Границы ставит сама языковая модель: она видит подписанные временем кадры целиком.
+
+    Это прямой конкурент нашему разбиению по признакам, и нужен он ровно затем, чтобы
+    сравнение «VLM против DP» было измерением, а не спором.
+    """
+    model, processor = state["model"], state["processor"]
+    started = time.perf_counter()
+    images = [decode(frame) for frame in request.frames]
+
+    content = []
+    for image, at in zip(images, request.times):
+        content.append({"type": "text", "text": f"{at:.1f} с:"})
+        content.append({"type": "image", "image": image})
+    content.append(
+        {
+            "type": "text",
+            "text": SEGMENT_PROMPT.format(
+                domain=request.domain or DEFAULT_DOMAIN,
+                actions=", ".join(request.actions),
+                objects=", ".join(request.objects),
+            ),
+        }
+    )
+    text = processor.apply_chat_template(
+        [{"role": "user", "content": content}], add_generation_prompt=True, tokenize=False
+    )
+    inputs = processor(text=[text], images=images, return_tensors="pt").to(model.device)
+    generated = model.generate(**inputs, max_new_tokens=768, do_sample=False)
+    answer = processor.batch_decode(
+        generated[:, inputs["input_ids"].shape[1] :], skip_special_tokens=True
+    )[0]
+
+    steps = []
+    for item in parse_nested(answer).get("steps", []):
+        try:
+            start, end = float(item["start_sec"]), float(item["end_sec"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if end > start:
+            steps.append(
+                {
+                    "start_sec": start,
+                    "end_sec": end,
+                    "action": closest(str(item.get("action", "")), request.actions),
+                    "object": closest(str(item.get("object", "")), request.objects),
+                }
+            )
+    return {
+        "steps": steps,
+        "raw": answer.strip()[:400],
+        "model": state["model_id"],
+        "elapsed_sec": round(time.perf_counter() - started, 2),
+    }
+
+
+@app.post("/compare")
+@torch.inference_mode()
+def compare(request: CompareRequest) -> dict:
+    """Сменилось ли действие между двумя кадрами. Из этих ответов строится бинпоиск границы."""
+    model, processor = state["model"], state["processor"]
+    started = time.perf_counter()
+
+    texts, groups = [], []
+    for pair in request.pairs:
+        images = [decode(pair.left), decode(pair.right)]
+        content = [
+            {"type": "image", "image": images[0]},
+            {"type": "image", "image": images[1]},
+            {
+                "type": "text",
+                "text": COMPARE_PROMPT.format(
+                    domain=request.domain or DEFAULT_DOMAIN,
+                    left=pair.left_sec,
+                    right=pair.right_sec,
+                ),
+            },
+        ]
+        texts.append(
+            processor.apply_chat_template(
+                [{"role": "user", "content": content}], add_generation_prompt=True, tokenize=False
+            )
+        )
+        groups.append(images)
+
+    processor.tokenizer.padding_side = "left"
+    answers = []
+    for start in range(0, len(texts), BATCH_SIZE):
+        chunk_texts = texts[start : start + BATCH_SIZE]
+        chunk_images = [img for group in groups[start : start + BATCH_SIZE] for img in group]
+        inputs = processor(
+            text=chunk_texts, images=chunk_images, padding=True, return_tensors="pt"
+        ).to(model.device)
+        generated = model.generate(**inputs, max_new_tokens=32, do_sample=False)
+        answers.extend(
+            processor.batch_decode(
+                generated[:, inputs["input_ids"].shape[1] :], skip_special_tokens=True
+            )
+        )
+
+    changed = [bool(parse(answer).get("changed")) for answer in answers]
+    return {
+        "changed": changed,
+        "model": state["model_id"],
+        "elapsed_sec": round(time.perf_counter() - started, 2),
     }
 
 

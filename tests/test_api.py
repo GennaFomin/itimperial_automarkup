@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -274,3 +275,21 @@ def test_unavailable_feature_service_is_reported_not_hidden(tmp_path, monkeypatc
 
     provenance = Annotation.model_validate_json(store.get_video(video_id)["prediction"]).provenance
     assert provenance.warnings == record["warnings"], "то же самое обязано быть в экспорте"
+
+
+def test_run_is_logged_with_everything_the_case_demands(client, videos):
+    """schema_version, model_version, latency_ms, cost, error, artifacts — список кейсодателя."""
+    video_id = upload(client, videos["ok"]).json()["id"]
+
+    provenance = Annotation.model_validate_json(store.get_video(video_id)["prediction"]).provenance
+    assert provenance.schema_version
+    assert provenance.latency_ms and provenance.latency_ms > 0
+    assert {"decode", "segment", "recognize"} <= set(provenance.stages_ms)
+    assert provenance.cost["amount"] >= 0
+    assert any(item["path"] == "source.mp4" for item in provenance.artifacts)
+
+    runs = [event for event in store.events(video_id) if event["kind"] == "run"]
+    assert len(runs) == 1, "прогон обязан оставить запись в журнале"
+    payload = json.loads(runs[0]["payload"])
+    assert payload["model_version"] and payload["latency_ms"] > 0
+    assert payload["error"] is None

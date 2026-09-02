@@ -71,6 +71,9 @@ VLM_FRAME_LABELS = os.getenv("PRAXIS_VLM_FRAME_LABELS", "1").lower() not in {"0"
 VLM_TWO_STAGE = os.getenv("PRAXIS_VLM_TWO_STAGE", "0").lower() not in {"0", "false", "no"}
 VLM_FRAMES = int(os.getenv("PRAXIS_VLM_FRAMES", "8"))
 VLM_FRAME_WIDTH = int(os.getenv("PRAXIS_VLM_FRAME_WIDTH", "640"))
+# Ставка за час GPU: из неё и секунд работы моделей считается стоимость прогона,
+# которую кейс требует показывать на финале.
+GPU_HOUR_COST = float(os.getenv("PRAXIS_GPU_HOUR_COST", "60"))
 VLM_TIMEOUT = float(os.getenv("PRAXIS_VLM_TIMEOUT", "120"))
 
 # Писать ли в экспорт отметку о проверке шага человеком. В требованиях кейса такого

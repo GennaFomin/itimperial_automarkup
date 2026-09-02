@@ -94,12 +94,23 @@ class VideoMeta(BaseModel):
 class Provenance(BaseModel):
     """Чем и когда сделана разметка. Уходит в экспорт: без этого результат невоспроизводим."""
 
+    schema_version: str = SCHEMA_VERSION
     app_version: str
     pipeline: str
     vocabulary: str
     models: dict[str, str] = Field(default_factory=dict)
     backend: str | None = None
     processing_sec: float | None = Field(default=None, ge=0)
+    # Кейс требует логировать это у каждого прогона: schema_version, model_version,
+    # latency_ms, cost, error, artifacts. Первые два собираются из полей выше.
+    latency_ms: int | None = Field(default=None, ge=0)
+    # Сколько заняла каждая стадия: без разбивки непонятно, что именно оптимизировать.
+    stages_ms: dict[str, int] = Field(default_factory=dict)
+    # Честная стоимость прогона — секунды GPU и число обращений к моделям. Деньги
+    # считаются из них по ставке, а не выдумываются.
+    cost: dict[str, float] = Field(default_factory=dict)
+    # Что прогон произвёл на диске: путь и размер.
+    artifacts: list[dict] = Field(default_factory=list)
     # Прогон прошёл, но не в полную силу: сервис признаков или именования был недоступен.
     # Без этого списка деградировавший прогон выглядит как успешный.
     warnings: list[str] = Field(default_factory=list)

@@ -198,6 +198,18 @@ async def post_event(video_id: str, event: EventIn) -> dict:
     return {"logged": True}
 
 
+@app.get("/api/videos/{video_id}/runs")
+async def get_runs(video_id: str) -> dict:
+    """История прогонов: версии, время по этапам, стоимость и ошибки. Это требуемый audit."""
+    _video_or_404(video_id)
+    return {
+        "runs": [
+            {"at": event["at"], **json.loads(event["payload"] or "{}")}
+            for event in store.events(video_id, "run")
+        ]
+    }
+
+
 @app.get("/api/stats")
 async def get_stats() -> dict:
     return store.review_stats()

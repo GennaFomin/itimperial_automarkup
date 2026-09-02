@@ -128,6 +128,7 @@ def perceive(source: Path) -> Perception:
             appearance=appearance,
             crop=_crop(frames),
             offset=offset,
+            remote_sec=float(video.get("elapsed_sec") or 0.0),
         )
 
     appearance = _remote_embeddings(source)
@@ -172,12 +173,17 @@ def annotate_clip(
     """Ядро разметки без веб-обвязки: используется и фоновой задачей, и пакетным прогоном."""
     started = time.perf_counter() if started is None else started
     vocabulary = load_vocabulary(config.VOCAB_PATH)
+
+    at_segment = time.perf_counter()
     segmenter = get_segmenter(config.PIPELINE)
     result = segmenter.run(source, meta, vocabulary, perception)
+    segment_sec = time.perf_counter() - at_segment
 
     # Границы уже стоят — языковая модель только называет то, что нарезано.
+    at_name = time.perf_counter()
     namer = get_namer()
     named = namer.name_steps(source, meta, result.steps, vocabulary, perception.crop)
+    name_sec = time.perf_counter() - at_name
 
     # Соседние куски с одинаковой меткой — это один шаг, разрезанный по смене картинки.
     # Понять это можно только после именования, поэтому склейка здесь, а не в сегментаторе.
@@ -190,6 +196,13 @@ def annotate_clip(
     if named.models.get("namer_status"):
         warnings.append(f"именование: {named.models['namer_status']}")
 
+    # Стоимость прогона считается из секунд удалённых моделей, а не выдумывается.
+    # Ставка задаётся конфигом: у своей карты она одна, у облака другая.
+    model_sec = perception.remote_sec + _float(named.models.get("vlm_sec")) + _float(
+        named.models.get("classifier_sec")
+    )
+    elapsed = time.perf_counter() - started
+
     annotation = Annotation(
         video=meta,
         steps=steps,
@@ -199,7 +212,17 @@ def annotate_clip(
             vocabulary=vocabulary.name,
             models={**result.models, **named.models},
             backend=config.VLM_BASE_URL or "local",
-            processing_sec=round(time.perf_counter() - started, 3),
+            processing_sec=round(elapsed, 3),
+            latency_ms=int(round(elapsed * 1000)),
+            stages_ms={
+                "segment": int(round(segment_sec * 1000)),
+                "recognize": int(round(name_sec * 1000)),
+            },
+            cost={
+                "model_sec": round(model_sec, 2),
+                "gpu_hour_rate": config.GPU_HOUR_COST,
+                "amount": round(model_sec / 3600 * config.GPU_HOUR_COST, 4),
+            },
             warnings=warnings,
         ),
     )
@@ -229,13 +252,34 @@ def process_video(video_id: str) -> None:
             height=record["height"],
         )
 
+        at_decode = time.perf_counter()
         perception = perceive(source)
         motion = [round(float(value), 4) for value in perception.motion]
         strip = media.filmstrip(source, meta.duration_sec, directory / "strip")
+        decode_ms = int(round((time.perf_counter() - at_decode) * 1000))
 
         result = annotate_clip(source, meta, perception, started)
         annotation = result.annotation
+        annotation.provenance.stages_ms["decode"] = decode_ms
+        annotation.provenance.artifacts = _artifacts(directory)
         elapsed = annotation.provenance.processing_sec
+
+        # Событие прогона — append-only журнал: перезапуск перезаписывает предсказание,
+        # а история прогонов обязана сохраниться. Это и есть требуемый audit.
+        store.log_event(
+            video_id,
+            "run",
+            {
+                "schema_version": annotation.provenance.schema_version,
+                "model_version": f"{annotation.provenance.pipeline}-{annotation.provenance.app_version}",
+                "latency_ms": annotation.provenance.latency_ms,
+                "stages_ms": annotation.provenance.stages_ms,
+                "cost": annotation.provenance.cost,
+                "warnings": annotation.provenance.warnings,
+                "artifacts": len(annotation.provenance.artifacts),
+                "error": None,
+            },
+        )
 
         store.update_video(
             video_id,
@@ -248,11 +292,20 @@ def process_video(video_id: str) -> None:
             alternatives=json.dumps(result.alternatives),
         )
     except Exception as error:  # noqa: BLE001 — статус задачи важнее типа ошибки
+        message = f"{error}\n{traceback.format_exc(limit=3)}"
         store.update_video(
             video_id,
             status="failed",
-            error=f"{error}\n{traceback.format_exc(limit=3)}",
+            error=message,
             processing_sec=round(time.perf_counter() - started, 3),
+        )
+        store.log_event(
+            video_id,
+            "run",
+            {
+                "latency_ms": int(round((time.perf_counter() - started) * 1000)),
+                "error": str(error),
+            },
         )
 
 
@@ -274,6 +327,25 @@ def prepare_upload(video_id: str, filename: str, raw: bytes) -> dict:
     if meta["height"] < config.MIN_HEIGHT:
         raise ValueError(f"нужно не меньше {config.MIN_HEIGHT}p (получено {meta['height']}p)")
     return meta
+
+
+def _artifacts(directory: Path) -> list[dict]:
+    """Что прогон оставил на диске. Кейс требует перечислять артефакты, а не подразумевать."""
+    return sorted(
+        (
+            {"path": str(path.relative_to(directory)), "bytes": path.stat().st_size}
+            for path in directory.rglob("*")
+            if path.is_file()
+        ),
+        key=lambda item: item["path"],
+    )
+
+
+def _float(value: str | None) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _version() -> str:

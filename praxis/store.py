@@ -169,6 +169,17 @@ def _summarise(per_video: dict[str, float]) -> dict:
     }
 
 
+def events(video_id: str, kind: str | None = None) -> list[dict]:
+    """Журнал по ролику. Append-only: прогон перезаписывает разметку, история остаётся."""
+    query = "SELECT * FROM events WHERE video_id = ?"
+    params: tuple = (video_id,)
+    if kind:
+        query += " AND kind = ?"
+        params += (kind,)
+    with connect() as connection:
+        return [dict(row) for row in connection.execute(query + " ORDER BY id", params)]
+
+
 def review_stats() -> dict:
     """Сколько человек потратил на правку и сколько — на разметку с нуля.
 
