@@ -33,8 +33,10 @@ def main() -> None:
         raise SystemExit("эталонов не нашлось")
 
     print(f"\nроликов в наборе: {len(references)}\n")
+    # Ошибка границ считается только по совпавшим шагам, поэтому рядом обязательно
+    # печатается их число: метод, сопоставивший мало, показывает лестную ошибку.
     header = f"{'способ':<14}{'F1@0.1':>9}{'F1@0.25':>9}{'F1@0.5':>9}{'границы':>10}"
-    print(header + f"{'шагов':>8}{'эталон':>8}{'с/ролик':>9}")
+    print(header + f"{'совпало':>9}{'шагов':>8}{'эталон':>8}{'с/ролик':>9}")
 
     for entry in args.pred:
         name, _, directory = entry.partition("=")
@@ -65,6 +67,7 @@ def main() -> None:
             f"{summary['f1@0.25_nolabel']:>9.3f}"
             f"{summary['f1@0.5_nolabel']:>9.3f}"
             f"{summary['boundary_mae_sec']:>9.2f}с"
+            f"{summary['matched_segments']:>9}"
             f"{statistics.fmean(predicted_steps) if predicted_steps else 0:>8.1f}"
             f"{statistics.fmean(truth_steps):>8.1f}"
             f"{statistics.fmean(latencies) if latencies else 0:>9.1f}"

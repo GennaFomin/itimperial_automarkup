@@ -141,7 +141,17 @@ class VlmBoundarySegmenter:
         with tempfile.TemporaryDirectory() as directory:
             for index, at in enumerate(times):
                 path = Path(directory) / f"{index}.jpg"
-                media.extract_frame(video_path, at, path, width=config.VLM_FRAME_WIDTH)
+                # Время впечатывается в пиксели, а не подписывается рядом: в NumPro
+                # (CVPR 2025) перенос отметки внутрь кадра поднимает Qwen2-VL-7B на
+                # Charades-STA с 7.9 до 38.5 mIoU без обучения. Сравнение подходов
+                # честно только если у модели её лучший известный интерфейс времени.
+                media.extract_frame(
+                    video_path,
+                    at,
+                    path,
+                    width=config.VLM_FRAME_WIDTH,
+                    stamp=f"{at:.1f}s" if config.VLM_STAMP_TIME else None,
+                )
                 encoded.append(base64.b64encode(path.read_bytes()).decode())
         return encoded
 

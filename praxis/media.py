@@ -65,8 +65,13 @@ def extract_frame(
     out: Path,
     width: int = 640,
     crop: tuple[float, float, float, float] | None = None,
+    stamp: str | None = None,
 ) -> Path:
-    """Один кадр в JPEG. Кроп задаётся долями кадра (слева, сверху, ширина, высота)."""
+    """Один кадр в JPEG. Кроп задаётся долями кадра (слева, сверху, ширина, высота).
+
+    stamp впечатывает подпись прямо в пиксели: языковая модель связывает время с кадром
+    заметно лучше, когда оно нарисовано на самом кадре, а не подписано рядом текстом.
+    """
     out.parent.mkdir(parents=True, exist_ok=True)
     filters = []
     if crop:
@@ -75,6 +80,10 @@ def extract_frame(
             f"crop=iw*{span_x:.4f}:ih*{span_y:.4f}:iw*{left:.4f}:ih*{top:.4f}"
         )
     filters.append(f"scale={width}:-2")
+    if stamp:
+        filters.append(
+            f"drawtext=text='{stamp}':x=8:y=8:fontsize=28:fontcolor=white:box=1:boxcolor=black"
+        )
     _run(
         [
             "ffmpeg",
