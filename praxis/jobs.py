@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import tempfile
 import time
@@ -56,10 +57,33 @@ def _remote_embeddings(source: Path) -> np.ndarray | None:
     return raw.reshape(answer["count"], answer["dim"]).astype(np.float32)
 
 
+def _feature_cache_path(source: Path) -> Path:
+    """Ключ кэша: сам файл плюс параметры, влияющие на признаки."""
+    stamp = f"{source.resolve()}|{source.stat().st_size}|{config.VIDEO_FPS}|"
+    stamp += f"{config.VIDEO_WINDOW}|{config.VIDEO_STRIDE}|{config.VIDEO_BASE_URL}"
+    digest = hashlib.sha1(stamp.encode()).hexdigest()[:16]
+    return config.WORK_DIR / "features" / f"{digest}.npz"
+
+
 def _video_features(source: Path) -> dict | None:
-    """Признаки окон кадров с видеоэнкодера: они видят движение, а не только содержимое."""
+    """Признаки окон кадров с видеоэнкодера: они видят движение, а не только содержимое.
+
+    Результат кладётся в кэш на диск: подбор параметров нарезки перегоняет один и тот же
+    ролик десятки раз, и без кэша каждый прогон заново тратит секунды GPU на то же самое.
+    """
     if config.FEATURES != "video" or not config.VIDEO_BASE_URL:
         return None
+
+    cached = _feature_cache_path(source)
+    if config.FEATURE_CACHE and cached.exists():
+        with np.load(cached) as data:
+            return {
+                "matrix": data["matrix"].astype(np.float32),
+                "fps": float(data["fps"]),
+                "offset_sec": float(data["offset_sec"]),
+                "count": int(data["matrix"].shape[0]),
+                "elapsed_sec": 0.0,
+            }
 
     with tempfile.TemporaryDirectory() as directory:
         small = Path(directory) / "small.mp4"
@@ -86,6 +110,14 @@ def _video_features(source: Path) -> dict | None:
         return None
     raw = np.frombuffer(base64.b64decode(answer["embeddings"]), dtype=np.float16)
     answer["matrix"] = raw.reshape(answer["count"], answer["dim"]).astype(np.float32)
+    if config.FEATURE_CACHE:
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(
+            cached,
+            matrix=answer["matrix"].astype(np.float16),
+            fps=answer.get("fps", config.MOTION_FPS),
+            offset_sec=answer.get("offset_sec", 0.0),
+        )
     return answer
 
 

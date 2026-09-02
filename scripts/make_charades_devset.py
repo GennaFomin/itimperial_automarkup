@@ -167,11 +167,17 @@ def main() -> None:
     parser.add_argument("--min-step", type=float, default=1.5)
     parser.add_argument("--min-steps", type=int, default=2)
     parser.add_argument("--max-steps", type=int, default=6)
+    # Фильтры «красиво делимого» ролика: шаги должны быть разделены явными паузами,
+    # а не примыкать вплотную. На таких роликах видно, работает алгоритм или нет.
+    parser.add_argument("--min-gap", type=float, default=0.0, help="пауза между шагами")
+    parser.add_argument("--min-coverage", type=float, default=0.0)
+    parser.add_argument("--max-coverage", type=float, default=1.0)
+    parser.add_argument("--split", default="train", choices=["train", "test"])
     args = parser.parse_args()
 
     mapping, all_verbs, all_objects = taxonomy(args.annotations)
 
-    rows = list(csv.DictReader((args.annotations / "Charades_v1_train.csv").open()))
+    rows = list(csv.DictReader((args.annotations / f"Charades_v1_{args.split}.csv").open()))
     chosen = []
     for row in rows:
         try:
@@ -186,6 +192,12 @@ def main() -> None:
         actions = parse_actions(row["actions"], mapping)
         steps = drop_overlaps(actions, args.min_step)
         if not (args.min_steps <= len(steps) <= args.max_steps):
+            continue
+        gaps = [steps[i + 1][0] - steps[i][1] for i in range(len(steps) - 1)]
+        if gaps and min(gaps) < args.min_gap:
+            continue
+        coverage = sum(end - start for start, end, _, _ in steps) / length
+        if not (args.min_coverage <= coverage <= args.max_coverage):
             continue
         chosen.append((row["id"], length, steps, label_sets(actions, steps)))
         if len(chosen) >= args.clips:

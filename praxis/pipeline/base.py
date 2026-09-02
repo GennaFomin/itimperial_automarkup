@@ -67,6 +67,14 @@ def get_segmenter(name: str) -> Segmenter:
         from praxis.pipeline.physical import PhysicalSegmenter
 
         return PhysicalSegmenter()
+    if name.startswith("baseline-"):
+        from praxis.pipeline.baselines import BaselineSegmenter
+
+        return BaselineSegmenter(mode=name.removeprefix("baseline-"))
+    if name in {"tsm-recursive", "tsm-kernel"}:
+        from praxis.pipeline.similarity import SimilaritySegmenter
+
+        return SimilaritySegmenter(mode=name.removeprefix("tsm-"))
     if name in {"vlm-direct", "vlm-bisect"}:
         from praxis.pipeline.vlm_bounds import VlmBoundarySegmenter
 

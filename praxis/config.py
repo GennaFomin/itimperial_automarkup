@@ -107,6 +107,11 @@ VIDEO_BASE_URL = os.getenv("PRAXIS_VIDEO_BASE_URL", "")
 # Закономерность: признаки, обученные распознавать действия на Kinetics, обходят
 # самообучаемые. Ровно поэтому работы по temporal action segmentation стоят на I3D.
 VIDEO_MODEL = os.getenv("PRAXIS_VIDEO_MODEL", "timesformer")
+# Пороги для методов по матрице самоподобия (praxis/pipeline/similarity.py).
+# Кэш признаков на диске: подбор параметров гоняет один ролик десятки раз.
+FEATURE_CACHE = os.getenv("PRAXIS_FEATURE_CACHE", "1").lower() not in {"0", "false", "no"}
+TSM_THRESHOLD = float(os.getenv("PRAXIS_TSM_THRESHOLD", "0.05"))
+TSM_PENALTY = float(os.getenv("PRAXIS_TSM_PENALTY", "1.0"))
 VIDEO_WINDOW = int(os.getenv("PRAXIS_VIDEO_WINDOW", "16"))
 # Шаг 2 (сетка 8 Гц вместо 4) измерен на 60 роликах Charades: F1@0.5 0.466 против 0.452,
 # границы 1.46 с против 1.63 с, но F1@0.25 0.756 против 0.783 — всё внутри доверительного
