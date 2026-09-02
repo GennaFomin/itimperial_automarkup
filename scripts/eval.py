@@ -26,7 +26,7 @@ from praxis.metrics import IOU_THRESHOLDS, evaluate
 def targets(summary: dict) -> list[str]:
     """Цели кейса — печатаем рядом с фактом, чтобы не сверять руками."""
     checks = [
-        ("step-F1 >= 0.75", summary["f1@0.5"] >= 0.75, f"{summary['f1@0.5']:.3f}"),
+        ("step-F1 >= 0.75", summary["case_f1"] >= 0.75, f"{summary['case_f1']:.3f}"),
         (
             "границы <= 2 c",
             summary["boundary_mae_sec"] <= 2.0,
@@ -53,21 +53,32 @@ def main() -> None:
     parser.add_argument("--json", type=Path, help="куда сохранить полный отчёт")
     args = parser.parse_args()
 
+    # Ролик без предсказания идёт в пары как None: упавший прогон — полный промах, а не
+    # повод исключить ролик из знаменателя.
     pairs = []
     for gt_path in sorted(args.gt.glob("*.json")):
         pred_path = args.pred / gt_path.name
-        if pred_path.exists():
-            pairs.append((gt_path, pred_path))
-        else:
-            print(f"нет предсказания для {gt_path.name}")
+        pairs.append((gt_path, pred_path if pred_path.exists() else None))
     if not pairs:
-        raise SystemExit("не нашлось ни одной пары эталон/предсказание")
+        raise SystemExit("не нашлось ни одного эталона")
 
     report = evaluate(pairs)
     summary = report["summary"]
 
-    print(f"\nроликов: {summary['clips']}, сопоставлено сегментов: {summary['matched_segments']}\n")
-    print(f"{'метрика':<28} {'со сверкой меток':>18} {'только нарезка':>16}   {'90% для нарезки'}")
+    print(f"\nроликов: {summary['clips']}, сопоставлено сегментов: {summary['matched_segments']}")
+    if summary["clips_without_prediction"]:
+        print(f"без предсказания: {summary['clips_without_prediction']} — считаются промахом")
+
+    # Метрика кейса первой и отдельно: остальные числа — диагностика, а не оценка.
+    low, high = summary["ci90"]["case_f1"]
+    print("\nправило кейса — IoU >= 0.5 и верное действие, один-к-одному:")
+    print(f"{'  step-F1':<28}{summary['case_f1']:>18.3f}")
+    print(f"{'  precision':<28}{summary['case_precision']:>18.3f}")
+    print(f"{'  recall':<28}{summary['case_recall']:>18.3f}")
+    print(f"{'  среднее по роликам':<28}{summary['case_f1_macro']:>18.3f}   ({low:.3f}–{high:.3f})")
+    print()
+    print("диагностика — что именно ломается:")
+    print(f"{'метрика':<28} {'действие+предмет':>18} {'только нарезка':>16}   {'90% для нарезки'}")
     for threshold in IOU_THRESHOLDS:
         low, high = summary["ci90"][f"f1@{threshold}_nolabel"]
         print(

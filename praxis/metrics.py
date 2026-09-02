@@ -3,9 +3,12 @@
 Считает то, что записано в целях кейса, и отдельно то, что нужно нам самим, чтобы
 понимать, где именно ломается пайплайн:
 
-* **step-F1@IoU** в двух вариантах — со сверкой меток (как оценивают нас) и без неё
-  (чистое качество нарезки). Разница между вариантами сразу показывает, что чинить:
-  границы или семантику; по одной цифре F1 это неразличимо.
+* **метрика кейса** — `case_f1` с precision и recall: сопоставление один-к-одному при
+  IoU >= 0.5 **и верном действии**. Предмет в матчинг не входит: правило кейса требует
+  только класс действия. Это единственное число, по которому нас оценивают.
+* **step-F1@IoU** ещё в двух вариантах — по паре «действие+предмет» (строже кейса) и
+  вовсе без сверки меток (чистая нарезка). Разница между тремя вариантами сразу
+  показывает, что чинить: границы, глагол или предмет.
 * **ошибка границ** по сопоставленным сегментам: среднее и 95-й процентиль.
 * **точность** отдельно по действию и по объекту — они ломаются по разным причинам.
 * **edit score** и **пофреймовая точность** — стандартные метрики temporal action
@@ -36,6 +39,14 @@ class Segment:
     def label(self) -> str:
         return f"{self.action}|{self.object or ''}"
 
+    def key(self, match_on: str) -> str | None:
+        """Что должно совпасть, чтобы сегменты считались одним и тем же шагом."""
+        if match_on == "action":
+            return self.action
+        if match_on == "pair":
+            return self.label
+        return None  # "none" — сверяем только время
+
 
 def segments(annotation: Annotation) -> list[Segment]:
     return [
@@ -50,33 +61,56 @@ def iou(left: Segment, right: Segment) -> float:
     return intersection / union if union > 0 else 0.0
 
 
-def match(truth: list[Segment], predicted: list[Segment], threshold: float, labelled: bool):
-    """Жадное сопоставление предсказаний с эталоном, как принято в temporal action segmentation."""
-    used = [False] * len(truth)
-    pairs: list[tuple[int, int]] = []
+def match(truth: list[Segment], predicted: list[Segment], threshold: float, match_on: str):
+    """Сопоставление один-к-одному, как требует правило кейса.
+
+    Пары набираются по убыванию IoU, а не по порядку предсказаний: иначе ранний сегмент
+    занимает эталон, которому лучше подошёл бы поздний, и пара теряется на ровном месте.
+    При пороге 0.5 разницы нет — перекрытий внутри уровня схема не допускает, — но при
+    мягких порогах порядок решает.
+    """
+    candidates = []
     for predicted_index, prediction in enumerate(predicted):
-        scores = [
-            iou(prediction, reference)
-            if (not labelled or prediction.label == reference.label)
-            else 0.0
-            for reference in truth
-        ]
-        if not scores:
-            break
-        best = max(range(len(scores)), key=lambda index: scores[index])
-        if scores[best] >= threshold and not used[best]:
-            used[best] = True
-            pairs.append((predicted_index, best))
+        for truth_index, reference in enumerate(truth):
+            if prediction.key(match_on) != reference.key(match_on):
+                continue
+            score = iou(prediction, reference)
+            if score >= threshold:
+                candidates.append((score, predicted_index, truth_index))
+
+    candidates.sort(key=lambda item: -item[0])
+    used_truth: set[int] = set()
+    used_predicted: set[int] = set()
+    pairs: list[tuple[int, int]] = []
+    for _, predicted_index, truth_index in candidates:
+        if predicted_index in used_predicted or truth_index in used_truth:
+            continue
+        used_predicted.add(predicted_index)
+        used_truth.add(truth_index)
+        pairs.append((predicted_index, truth_index))
     return pairs
 
 
-def f1(truth: list[Segment], predicted: list[Segment], threshold: float, labelled: bool) -> float:
-    true_positive = len(match(truth, predicted, threshold, labelled))
-    if not true_positive:
-        return 0.0
-    precision = true_positive / len(predicted)
-    recall = true_positive / len(truth)
-    return 2 * precision * recall / (precision + recall)
+def counts(
+    truth: list[Segment], predicted: list[Segment], threshold: float, match_on: str
+) -> tuple[int, int, int]:
+    """Совпало, лишнее, пропущенное. Из этих трёх чисел считаются precision, recall и F1."""
+    true_positive = len(match(truth, predicted, threshold, match_on))
+    return true_positive, len(predicted) - true_positive, len(truth) - true_positive
+
+
+def prf(true_positive: int, false_positive: int, false_negative: int) -> tuple[float, float, float]:
+    """precision, recall и F1 из трёх счётчиков."""
+    predicted = true_positive + false_positive
+    actual = true_positive + false_negative
+    precision = true_positive / predicted if predicted else 0.0
+    recall = true_positive / actual if actual else 0.0
+    total = precision + recall
+    return precision, recall, 2 * precision * recall / total if total else 0.0
+
+
+def f1(truth: list[Segment], predicted: list[Segment], threshold: float, match_on: str) -> float:
+    return prf(*counts(truth, predicted, threshold, match_on))[2]
 
 
 def edit_score(truth: list[Segment], predicted: list[Segment]) -> float:
@@ -116,13 +150,19 @@ def frame_accuracy(truth: list[Segment], predicted: list[Segment], duration: flo
     return hits / len(times)
 
 
-def evaluate(pairs: list[tuple[Path, Path]]) -> dict:
-    """Оценка по парам файлов эталон/предсказание."""
+def evaluate(pairs: list[tuple[Path, Path | None]]) -> dict:
+    """Оценка по парам файлов эталон/предсказание.
+
+    Предсказание может отсутствовать: ролик, на котором пайплайн упал, обязан попасть в
+    знаменатель полным промахом, иначе падение улучшает метрику.
+    """
     return evaluate_annotations(
         [
             (
                 Annotation.model_validate_json(gt.read_text(encoding="utf-8")),
-                Annotation.model_validate_json(pred.read_text(encoding="utf-8")),
+                Annotation.model_validate_json(pred.read_text(encoding="utf-8"))
+                if pred is not None
+                else None,
                 gt.stem,
             )
             for gt, pred in pairs
@@ -130,36 +170,45 @@ def evaluate(pairs: list[tuple[Path, Path]]) -> dict:
     )
 
 
-def evaluate_annotations(items: list[tuple[Annotation, Annotation, str]]) -> dict:
+def evaluate_annotations(items: list[tuple[Annotation, Annotation | None, str]]) -> dict:
     """Оценка по уже загруженным разметкам — этим пользуется подбор параметров."""
     per_clip = []
     boundary_errors: list[float] = []
     action_hits = object_hits = both_hits = matched_total = 0
     latencies: list[float] = []
+    # Пул по всему набору для метрики кейса: «затем считаем precision, recall и F1»
+    # естественнее читается как общий счёт, а не среднее по роликам.
+    case_tp = case_fp = case_fn = 0
+    missing = 0
 
     for truth_annotation, pred_annotation, name in items:
         truth = segments(truth_annotation)
-        predicted = segments(pred_annotation)
+        predicted = segments(pred_annotation) if pred_annotation is not None else []
+        missing += pred_annotation is None
         duration = truth_annotation.video.duration_sec
+
+        true_positive, false_positive, false_negative = counts(truth, predicted, 0.5, "action")
+        case_tp += true_positive
+        case_fp += false_positive
+        case_fn += false_negative
 
         clip = {
             "clip": name,
             "gt_steps": len(truth),
             "pred_steps": len(predicted),
+            "case_f1": round(prf(true_positive, false_positive, false_negative)[2], 3),
             "edit": round(edit_score(truth, predicted), 3),
             "frame_accuracy": round(frame_accuracy(truth, predicted, duration), 3),
         }
         for threshold in IOU_THRESHOLDS:
-            clip[f"f1@{threshold}"] = round(f1(truth, predicted, threshold, labelled=True), 3)
-            clip[f"f1@{threshold}_nolabel"] = round(
-                f1(truth, predicted, threshold, labelled=False), 3
-            )
+            clip[f"f1@{threshold}"] = round(f1(truth, predicted, threshold, "pair"), 3)
+            clip[f"f1@{threshold}_nolabel"] = round(f1(truth, predicted, threshold, "none"), 3)
         per_clip.append(clip)
 
-        if pred_annotation.provenance.processing_sec:
+        if pred_annotation is not None and pred_annotation.provenance.processing_sec:
             latencies.append(pred_annotation.provenance.processing_sec)
 
-        for predicted_index, truth_index in match(truth, predicted, 0.5, labelled=False):
+        for predicted_index, truth_index in match(truth, predicted, 0.5, "none"):
             prediction, reference = predicted[predicted_index], truth[truth_index]
             boundary_errors.append(abs(prediction.start - reference.start))
             boundary_errors.append(abs(prediction.end - reference.end))
@@ -194,8 +243,15 @@ def evaluate_annotations(items: list[tuple[Annotation, Annotation, str]]) -> dic
         ordered = sorted(values)
         return round(ordered[min(int(fraction * len(ordered)), len(ordered) - 1)], 3)
 
+    case_precision, case_recall, case_f1 = prf(case_tp, case_fp, case_fn)
     summary = {
         "clips": len(per_clip),
+        "clips_without_prediction": missing,
+        # Метрика кейса: один-к-одному, IoU >= 0.5, верное действие. Пул по всему набору.
+        "case_f1": round(case_f1, 3),
+        "case_precision": round(case_precision, 3),
+        "case_recall": round(case_recall, 3),
+        "case_f1_macro": mean([clip["case_f1"] for clip in per_clip]),
         "boundary_mae_sec": mean(boundary_errors),
         "boundary_p95_sec": percentile(boundary_errors, 0.95),
         "matched_segments": matched_total,
@@ -214,7 +270,7 @@ def evaluate_annotations(items: list[tuple[Annotation, Annotation, str]]) -> dic
         )
     summary["ci90"] = {
         key: interval([clip[key] for clip in per_clip])
-        for key in (f"f1@{threshold}_nolabel" for threshold in IOU_THRESHOLDS)
+        for key in ["case_f1", *(f"f1@{t}_nolabel" for t in IOU_THRESHOLDS)]
     }
     return {"summary": summary, "per_clip": per_clip}
 

@@ -118,3 +118,51 @@ def test_oversegmentation_is_punished(write):
 
     assert summary["f1@0.5"] < 1.0, "лишний разрез обязан снижать F1"
     assert summary["f1@0.5_nolabel"] < 1.0
+
+
+def test_case_rule_matches_on_action_only(write):
+    """Правило кейса: совпадение при IoU >= 0.5 И верном действии. Предмет в матчинг не входит."""
+    wrong_object = [(start, end, action, "roof") for start, end, action, _ in TRUTH]
+    gt = write("gt", annotation(TRUTH))
+    pred = write("pred", annotation(wrong_object))
+    summary = evaluation.evaluate([(gt, pred)])["summary"]
+
+    assert summary["case_f1"] == 1.0, "действия верны, предмет в правило кейса не входит"
+    assert summary["f1@0.5"] == 0.0, "наш строгий вариант требует ещё и предмет"
+    assert summary["f1@0.5_nolabel"] == 1.0
+
+
+def test_case_rule_requires_correct_action(write):
+    """Верные границы при неверном глаголе — промах и в step-F1 тоже, а не только в семантике."""
+    wrong_action = [(start, end, "detach", obj) for start, end, _, obj in TRUTH]
+    gt = write("gt", annotation(TRUTH))
+    pred = write("pred", annotation(wrong_action))
+    summary = evaluation.evaluate([(gt, pred)])["summary"]
+
+    assert summary["case_f1"] == 0.0
+    assert summary["f1@0.5_nolabel"] == 1.0, "нарезка при этом идеальна"
+
+
+def test_precision_and_recall_are_reported_separately(write):
+    """Кейс требует precision и recall явно: лишние шаги и пропущенные бьют по разным числам."""
+    split = [(0.0, 2.4, "attach", "wheel"), (2.6, 5.0, "attach", "wheel")] + list(TRUTH[1:])
+    gt = write("gt", annotation(TRUTH))
+    pred = write("pred", annotation(split))
+    summary = evaluation.evaluate([(gt, pred)])["summary"]
+
+    assert summary["case_precision"] < summary["case_recall"], "лишний разрез бьёт по precision"
+    assert 0.0 < summary["case_f1"] < 1.0
+
+
+def test_missing_prediction_counts_as_total_miss(write):
+    """Ролик, на котором пайплайн упал, обязан попасть в знаменатель, а не исчезнуть."""
+    gt = write("gt", annotation(TRUTH))
+    pred = write("pred", annotation(TRUTH))
+
+    both = evaluation.evaluate([(gt, pred)])["summary"]
+    with_failure = evaluation.evaluate([(gt, pred), (gt, None)])["summary"]
+
+    assert both["case_f1"] == 1.0
+    assert with_failure["clips"] == 2, "упавший ролик считается роликом"
+    assert with_failure["case_recall"] == pytest.approx(0.5), "его шаги — пропуски"
+    assert with_failure["case_f1"] < both["case_f1"]
