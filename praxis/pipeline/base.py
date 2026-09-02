@@ -67,6 +67,10 @@ def get_segmenter(name: str) -> Segmenter:
         from praxis.pipeline.physical import PhysicalSegmenter
 
         return PhysicalSegmenter()
+    if name == "learned-boundaries":
+        from praxis.pipeline.learned import LearnedSegmenter
+
+        return LearnedSegmenter()
     if name == "tw-finch":
         from praxis.pipeline.clustering import FinchSegmenter
 

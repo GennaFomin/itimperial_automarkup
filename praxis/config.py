@@ -129,6 +129,9 @@ FEATURE_CACHE = os.getenv("PRAXIS_FEATURE_CACHE", "1").lower() not in {"0", "fal
 TRIM_SHARE = float(os.getenv("PRAXIS_TRIM_SHARE", "0.0"))
 START_SHIFT = float(os.getenv("PRAXIS_START_SHIFT", "0.0"))
 END_SHIFT = float(os.getenv("PRAXIS_END_SHIFT", "0.0"))
+# Обучаемый детектор границ: адрес сервиса и порог на вероятность.
+TAS_BASE_URL = os.getenv("PRAXIS_TAS_BASE_URL", "")
+TAS_THRESHOLD = float(os.getenv("PRAXIS_TAS_THRESHOLD", "0.5"))
 PEAK_SIGMA = float(os.getenv("PRAXIS_PEAK_SIGMA", "1.0"))
 TSM_THRESHOLD = float(os.getenv("PRAXIS_TSM_THRESHOLD", "0.35"))
 TSM_PENALTY = float(os.getenv("PRAXIS_TSM_PENALTY", "2.0"))
