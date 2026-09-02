@@ -184,3 +184,40 @@ def test_real_pipeline_produces_valid_annotation(real_pipeline_client, videos):
     for step in steps:
         assert step.keyframe_sec is not None
         assert step.start_sec <= step.keyframe_sec <= step.end_sec
+
+
+def test_review_never_overwrites_the_prediction(client, videos):
+    """Кейс требует prediction != review: прогноз обязан пережить любую правку.
+
+    Без этого метрики модели после первого прохода редактора пересчитать нечем — и
+    исчезает вторая половина пары «что предсказали → что оказалось верным».
+    """
+    video_id = upload(client, videos["ok"]).json()["id"]
+    original = Annotation.model_validate(
+        client.get(f"/api/videos/{video_id}/annotation").json()["annotation"]
+    )
+
+    edited = original.model_copy(deep=True)
+    edited.steps[0].action = "screw"
+    edited.steps[0].object = "chassis"
+    assert client.put(
+        f"/api/videos/{video_id}/annotation", json=edited.model_dump(mode="json")
+    ).status_code == 200
+
+    record = store.get_video(video_id)
+    assert Annotation.model_validate_json(record["prediction"]).steps == original.steps
+    assert Annotation.model_validate_json(record["review"]).steps[0].action == "screw"
+    assert client.get(f"/api/videos/{video_id}").json()["reviewed"] is True
+
+    # Прогноз читается снаружи явно — по нему считаются метрики после правки.
+    untouched = client.get(f"/api/videos/{video_id}/annotation?source=prediction").json()
+    assert Annotation.model_validate(untouched["annotation"]).steps == original.steps
+    assert untouched["source"] == "prediction"
+
+    # Самый опасный случай: редактор стирает все шаги ради замера ручной разметки.
+    emptied = original.model_copy(deep=True)
+    emptied.steps = []
+    assert client.put(
+        f"/api/videos/{video_id}/annotation", json=emptied.model_dump(mode="json")
+    ).status_code == 200
+    assert Annotation.model_validate_json(store.get_video(video_id)["prediction"]).steps

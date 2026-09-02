@@ -2,6 +2,12 @@
 
 Видео и кадры лежат на диске, всё остальное — здесь. События нужны не для красоты:
 из них считается фактическое время работы над роликом, то есть KPI кейса.
+
+Прогноз модели и правка человека хранятся в разных колонках и никогда не смешиваются:
+`prediction` пишется прогоном один раз и дальше неизменяем, `review` появляется при
+первой правке. Иначе метрики модели пересчитать нечем — после одного прохода редактора
+эталона просто не остаётся, — а сама пара «что предсказали → что оказалось верным»
+и есть тот проверенный датасет, ради которого кейс затевался.
 """
 
 from __future__ import annotations
@@ -26,7 +32,8 @@ CREATE TABLE IF NOT EXISTS videos (
     status         TEXT NOT NULL,
     error          TEXT,
     processing_sec REAL,
-    annotation     TEXT,
+    prediction     TEXT,
+    review         TEXT,
     motion         TEXT,
     filmstrip      TEXT,
     alternatives   TEXT,
@@ -62,11 +69,19 @@ def connect() -> Iterator[sqlite3.Connection]:
 def init_db() -> None:
     with connect() as connection:
         connection.executescript(SCHEMA)
-        # Мягкая миграция: база, созданная до появления подсказок, не должна ломаться.
-        try:
-            connection.execute("ALTER TABLE videos ADD COLUMN alternatives TEXT")
-        except sqlite3.OperationalError:
-            pass
+        # Мягкие миграции: база, созданная более ранней версией, не должна ломаться.
+        # Каждый шаг падает на уже применённой базе и это нормально.
+        for statement in (
+            "ALTER TABLE videos ADD COLUMN alternatives TEXT",
+            "ALTER TABLE videos ADD COLUMN prediction TEXT",
+            "ALTER TABLE videos ADD COLUMN review TEXT",
+            "UPDATE videos SET prediction = annotation WHERE prediction IS NULL",
+            "ALTER TABLE videos DROP COLUMN annotation",
+        ):
+            try:
+                connection.execute(statement)
+            except sqlite3.OperationalError:
+                pass
 
 
 def create_video(video_id: str, filename: str, meta: dict) -> None:
@@ -94,6 +109,16 @@ def update_video(video_id: str, **fields) -> None:
         connection.execute(
             f"UPDATE videos SET {assignments} WHERE id = ?", (*fields.values(), video_id)
         )
+
+
+def annotation_json(record: dict) -> str | None:
+    """Актуальная разметка: правка человека, если она есть, иначе прогноз модели."""
+    return record["review"] or record["prediction"]
+
+
+def save_review(video_id: str, payload: str) -> None:
+    """Правка пишется только в свою колонку — прогноз остаётся нетронутым навсегда."""
+    update_video(video_id, review=payload)
 
 
 def get_video(video_id: str) -> dict | None:

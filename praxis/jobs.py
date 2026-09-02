@@ -221,7 +221,7 @@ def process_video(video_id: str) -> None:
             video_id,
             status="done",
             processing_sec=elapsed,
-            annotation=annotation.model_dump_json(),
+            prediction=annotation.model_dump_json(),
             motion=json.dumps(motion),
             filmstrip=json.dumps(strip),
             alternatives=json.dumps(result.alternatives),

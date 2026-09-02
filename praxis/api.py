@@ -55,6 +55,8 @@ def _public(record: dict) -> dict:
         "status": record["status"],
         "error": record["error"],
         "processing_sec": record["processing_sec"],
+        # Правил ли человек этот ролик: прогноз при этом остаётся на месте.
+        "reviewed": bool(record["review"]),
         "motion": json.loads(record["motion"]) if record["motion"] else [],
         "filmstrip": json.loads(record["filmstrip"]) if record["filmstrip"] else [],
     }
@@ -85,14 +87,22 @@ async def get_video(video_id: str) -> dict:
 
 
 @app.get("/api/videos/{video_id}/annotation")
-async def get_annotation(video_id: str) -> dict:
+async def get_annotation(video_id: str, source: str = "current") -> dict:
+    """source=current — что показывать человеку, prediction — по чему считать метрики."""
     record = _video_or_404(video_id)
-    if not record["annotation"]:
-        raise HTTPException(409, f"разметка ещё не готова (статус: {record['status']})")
-    annotation = Annotation.model_validate_json(record["annotation"])
+    if source not in {"current", "prediction", "review"}:
+        raise HTTPException(400, "source: current, prediction или review")
+    payload = record[source] if source != "current" else store.annotation_json(record)
+    if not payload:
+        raise HTTPException(
+            409, f"нет разметки «{source}» (статус: {record['status']})"
+        )
+    annotation = Annotation.model_validate_json(payload)
     problems = check_annotation(annotation, load_vocabulary(config.VOCAB_PATH))
     return {
         "annotation": annotation.model_dump(mode="json"),
+        "source": source,
+        "reviewed": bool(record["review"]),
         "problems": problems,
         "alternatives": json.loads(record["alternatives"]) if record["alternatives"] else {},
     }
@@ -103,7 +113,8 @@ async def save_annotation(video_id: str, annotation: Annotation) -> dict:
     _video_or_404(video_id)
     if annotation.video.id != video_id:
         raise HTTPException(400, "идентификатор видео в разметке не совпадает с адресом")
-    store.update_video(video_id, annotation=annotation.model_dump_json())
+    # Пишем только правку. Прогноз модели неизменяем — на нём считаются метрики.
+    store.save_review(video_id, annotation.model_dump_json())
     store.log_event(video_id, "save", {"steps": len(annotation.steps)})
     problems = check_annotation(annotation, load_vocabulary(config.VOCAB_PATH))
     return {"saved": True, "problems": problems}
@@ -112,9 +123,10 @@ async def save_annotation(video_id: str, annotation: Annotation) -> dict:
 @app.get("/api/videos/{video_id}/export.json")
 async def export_json(video_id: str) -> FileResponse:
     record = _video_or_404(video_id)
-    if not record["annotation"]:
+    payload = store.annotation_json(record)
+    if not payload:
         raise HTTPException(409, "разметки нет")
-    annotation = Annotation.model_validate_json(record["annotation"])
+    annotation = Annotation.model_validate_json(payload)
     path = store.video_dir(video_id) / "annotation.json"
     path.write_text(to_json(annotation, config.EXPORT_VERIFIED), encoding="utf-8")
     store.log_event(video_id, "export", {"format": "json"})
@@ -124,9 +136,10 @@ async def export_json(video_id: str) -> FileResponse:
 @app.get("/api/videos/{video_id}/export.csv")
 async def export_csv(video_id: str) -> PlainTextResponse:
     record = _video_or_404(video_id)
-    if not record["annotation"]:
+    payload = store.annotation_json(record)
+    if not payload:
         raise HTTPException(409, "разметки нет")
-    annotation = Annotation.model_validate_json(record["annotation"])
+    annotation = Annotation.model_validate_json(payload)
     store.log_event(video_id, "export", {"format": "csv"})
     return PlainTextResponse(
         to_csv(annotation, config.EXPORT_VERIFIED),
