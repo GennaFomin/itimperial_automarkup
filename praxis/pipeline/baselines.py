@@ -12,6 +12,10 @@
 * **motion** — разрезы в локальных минимумах движения, без всяких признаков.
 * **peaks** — разрезы там, где соседние векторы признаков сильнее всего расходятся;
   классическая детекция смены, но без оптимизации по всему ролику.
+* **peaks-auto** — то же самое, но число разрезов не задаётся, а выводится из сигнала:
+  берутся выбросы выше среднего на несколько сигм. Разница принципиальная. Методу с
+  фиксированным K нужно заранее знать, сколько в ролике шагов, а в бою этого никто не
+  знает — сравнивать его с методами, которые число выводят сами, нечестно.
 """
 
 from __future__ import annotations
@@ -81,6 +85,23 @@ class BaselineSegmenter:
             ]
         return PipelineResult(steps=steps, models={"segmenter": self.name})
 
+    def _peak_threshold(self, scores: np.ndarray, minimum: int) -> list[int]:
+        """Разрезы в выбросах сигнала: сколько их — решает сам сигнал, а не настройка."""
+        interior = scores[minimum : len(scores) - minimum]
+        if not len(interior):
+            return []
+        level = float(interior.mean() + config.PEAK_SIGMA * interior.std())
+        chosen: list[int] = []
+        for index in np.argsort(-scores):
+            if scores[index] < level:
+                break
+            if index < minimum or index > len(scores) - minimum:
+                continue
+            if any(abs(index - other) < minimum for other in chosen):
+                continue
+            chosen.append(int(index))
+        return sorted(chosen)
+
     def _cuts(self, perception: Perception) -> list[float]:
         duration = len(perception.motion) / perception.fps
         if self.mode == "single":
@@ -88,16 +109,20 @@ class BaselineSegmenter:
         if self.mode == "uniform":
             return [duration * (i + 1) / self.parts for i in range(self.parts - 1)]
 
+        if self.mode in {"peaks-auto", "peaks"}:
+            features = reduce_dimensions(normalise(perception.appearance), config.COMPONENTS)
+            scores = np.concatenate(
+                [[0.0], np.linalg.norm(np.diff(features, axis=0), axis=1)]
+            )
+            minimum = max(1, int(config.MIN_SEGMENT_SEC * perception.fps))
+            if self.mode == "peaks-auto":
+                indices = self._peak_threshold(scores, minimum)
+                return sorted(perception.offset + index / perception.fps for index in indices)
+
         if self.mode == "motion":
             # Локальные минимумы движения: между действиями человек обычно замирает.
             signal = perception.motion
             scores = boundary_scores(signal)
-        else:
-            features = reduce_dimensions(normalise(perception.appearance), config.COMPONENTS)
-            # Расхождение соседних векторов — простейшая детекция смены содержимого.
-            diff = np.linalg.norm(np.diff(features, axis=0), axis=1)
-            scores = np.concatenate([[0.0], diff])
-
         minimum = max(1, int(config.MIN_SEGMENT_SEC * perception.fps))
         order = np.argsort(-scores)
         chosen: list[int] = []

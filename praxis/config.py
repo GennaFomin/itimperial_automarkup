@@ -119,6 +119,8 @@ FEATURE_CACHE = os.getenv("PRAXIS_FEATURE_CACHE", "1").lower() not in {"0", "fal
 #   грубая разметка (Charades, 2.2 шага по 6 с): штраф 20 -> F1@0.5 0.402
 #   атомарная (Assembly101 fine, 9.9 шага по 1 с): штраф 2 -> F1@0.5 0.401
 # Рекурсивный разбор проигрывает обоим на любом пороге, лучшее 0.251.
+# На сколько сигм выше среднего должен быть выброс, чтобы стать границей.
+PEAK_SIGMA = float(os.getenv("PRAXIS_PEAK_SIGMA", "1.0"))
 TSM_THRESHOLD = float(os.getenv("PRAXIS_TSM_THRESHOLD", "0.35"))
 TSM_PENALTY = float(os.getenv("PRAXIS_TSM_PENALTY", "2.0"))
 VIDEO_WINDOW = int(os.getenv("PRAXIS_VIDEO_WINDOW", "16"))
