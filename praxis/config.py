@@ -115,8 +115,12 @@ VIDEO_MODEL = os.getenv("PRAXIS_VIDEO_MODEL", "timesformer")
 # Пороги для методов по матрице самоподобия (praxis/pipeline/similarity.py).
 # Кэш признаков на диске: подбор параметров гоняет один ролик десятки раз.
 FEATURE_CACHE = os.getenv("PRAXIS_FEATURE_CACHE", "1").lower() not in {"0", "false", "no"}
-TSM_THRESHOLD = float(os.getenv("PRAXIS_TSM_THRESHOLD", "0.05"))
-TSM_PENALTY = float(os.getenv("PRAXIS_TSM_PENALTY", "1.0"))
+# Подобрано измерением, и оптимум резко зависит от гранулярности набора:
+#   грубая разметка (Charades, 2.2 шага по 6 с): штраф 20 -> F1@0.5 0.402
+#   атомарная (Assembly101 fine, 9.9 шага по 1 с): штраф 2 -> F1@0.5 0.401
+# Рекурсивный разбор проигрывает обоим на любом пороге, лучшее 0.251.
+TSM_THRESHOLD = float(os.getenv("PRAXIS_TSM_THRESHOLD", "0.35"))
+TSM_PENALTY = float(os.getenv("PRAXIS_TSM_PENALTY", "2.0"))
 VIDEO_WINDOW = int(os.getenv("PRAXIS_VIDEO_WINDOW", "16"))
 # Шаг 2 (сетка 8 Гц вместо 4) измерен на 60 роликах Charades: F1@0.5 0.466 против 0.452,
 # границы 1.46 с против 1.63 с, но F1@0.25 0.756 против 0.783 — всё внутри доверительного

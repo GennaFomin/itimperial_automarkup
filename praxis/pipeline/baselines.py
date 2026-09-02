@@ -31,7 +31,12 @@ from praxis.vocab import Vocabulary
 @dataclass
 class BaselineSegmenter:
     mode: str = "uniform"
-    parts: int = 3
+    # Число кусков берётся из общей настройки гранулярности, а не зашито: базовая линия
+    # должна получать те же условия, что и остальные методы, иначе сравнение нечестное.
+    parts: int = 0
+
+    def __post_init__(self) -> None:
+        self.parts = self.parts or max(2, config.MAX_SEGMENTS)
 
     @property
     def name(self) -> str:

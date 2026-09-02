@@ -67,6 +67,10 @@ def get_segmenter(name: str) -> Segmenter:
         from praxis.pipeline.physical import PhysicalSegmenter
 
         return PhysicalSegmenter()
+    if name == "tw-finch":
+        from praxis.pipeline.clustering import FinchSegmenter
+
+        return FinchSegmenter()
     if name.startswith("baseline-"):
         from praxis.pipeline.baselines import BaselineSegmenter
 
