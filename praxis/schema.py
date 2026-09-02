@@ -17,6 +17,21 @@ from pydantic import BaseModel, Field, model_validator
 # Допуск на сравнение таймкодов: миллисекунда. Кадр даже при 240 fps длиннее.
 EPS = 1e-3
 
+# Версия контракта выгрузки. Кейс требует логировать её у каждого прогона: модель и
+# пайплайн меняются, а формат, по которому нас принимают, обязан быть опознаваемым.
+SCHEMA_VERSION = "1.0"
+
+# Поля шага ровно так, как их опубликовал кейсодатель.
+CONTRACT_COLUMNS = [
+    "start_ms",
+    "end_ms",
+    "action",
+    "object",
+    "keyframe_ms",
+    "confidence",
+    "model_version",
+]
+
 
 class Level(str, Enum):
     """Уровень иерархии. Крупные шаги и вложенные в них подшаги."""
@@ -203,6 +218,57 @@ def steps_from_csv(text: str) -> list[Step]:
             )
         )
     return steps
+
+
+def _ms(seconds: float | None) -> int | None:
+    return None if seconds is None else int(round(seconds * 1000))
+
+
+def model_version(annotation: Annotation) -> str:
+    """Одна опознаваемая строка версии, как «pipeline-0.3» в контракте кейсодателя."""
+    return f"{annotation.provenance.pipeline}-{annotation.provenance.app_version}"
+
+
+def contract_steps(annotation: Annotation) -> list[dict]:
+    """Шаги в том виде, в каком их ждёт заказчик: миллисекунды целыми и его имена полей.
+
+    Наша внутренняя модель богаче — уровни, родитель, источник правки, отметка проверки, —
+    но наружу уходит ровно контракт. Так модель и пайплайн можно менять, не трогая то,
+    по чему нас принимают.
+    """
+    version = model_version(annotation)
+    return [
+        {
+            "start_ms": _ms(step.start_sec),
+            "end_ms": _ms(step.end_sec),
+            "action": step.action,
+            "object": step.object,
+            "keyframe_ms": _ms(step.keyframe_sec),
+            "confidence": step.confidence,
+            "model_version": version,
+        }
+        for step in annotation.at_level(Level.coarse)
+    ]
+
+
+def to_contract_json(annotation: Annotation, indent: int | None = 2) -> str:
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "video_id": annotation.video.id,
+        "filename": annotation.video.filename,
+        "duration_ms": _ms(annotation.video.duration_sec),
+        "steps": contract_steps(annotation),
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=indent)
+
+
+def to_contract_csv(annotation: Annotation) -> str:
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=CONTRACT_COLUMNS, lineterminator="\n")
+    writer.writeheader()
+    for step in contract_steps(annotation):
+        writer.writerow({key: "" if step[key] is None else step[key] for key in CONTRACT_COLUMNS})
+    return buffer.getvalue()
 
 
 def to_json(annotation: Annotation, include_verified: bool = True, indent: int | None = 2) -> str:

@@ -108,11 +108,12 @@ def test_full_cycle_upload_edit_export(client, videos):
     assert saved.status_code == 200, saved.text
     assert saved.json()["problems"] == []
 
-    exported = client.get(f"/api/videos/{video_id}/export.json").json()
+    # Полный профиль — наша внутренняя модель, она обязана ходить туда-обратно без потерь.
+    exported = client.get(f"/api/videos/{video_id}/export.json?profile=full").json()
     assert exported["steps"][0]["end_sec"] == 3.0
     assert Annotation.model_validate(exported)
 
-    csv_text = client.get(f"/api/videos/{video_id}/export.csv").text
+    csv_text = client.get(f"/api/videos/{video_id}/export.csv?profile=full").text
     assert steps_from_csv(csv_text) == annotation.steps
 
 
@@ -221,3 +222,31 @@ def test_review_never_overwrites_the_prediction(client, videos):
         f"/api/videos/{video_id}/annotation", json=emptied.model_dump(mode="json")
     ).status_code == 200
     assert Annotation.model_validate_json(store.get_video(video_id)["prediction"]).steps
+
+
+def test_contract_export_matches_the_published_shape(client, videos):
+    """Кейсодатель опубликовал контракт шага дословно — выгрузка обязана ему отвечать."""
+    video_id = upload(client, videos["ok"]).json()["id"]
+
+    payload = client.get(f"/api/videos/{video_id}/export.json").json()
+    assert payload["schema_version"]
+    assert payload["duration_ms"] == pytest.approx(
+        client.get(f"/api/videos/{video_id}").json()["duration_sec"] * 1000, abs=50
+    )
+
+    step = payload["steps"][0]
+    assert set(step) == {
+        "start_ms",
+        "end_ms",
+        "action",
+        "object",
+        "keyframe_ms",
+        "confidence",
+        "model_version",
+    }
+    assert isinstance(step["start_ms"], int) and isinstance(step["end_ms"], int)
+    assert step["end_ms"] > step["start_ms"]
+    assert step["model_version"], "версия обязана быть в каждом шаге, как в контракте"
+
+    header = client.get(f"/api/videos/{video_id}/export.csv").text.splitlines()[0]
+    assert header == "start_ms,end_ms,action,object,keyframe_ms,confidence,model_version"
