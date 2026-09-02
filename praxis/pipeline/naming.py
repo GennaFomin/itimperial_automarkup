@@ -188,9 +188,14 @@ class HttpNamer:
         with tempfile.TemporaryDirectory() as directory:
             for index, at in enumerate(sorted(set(round(value, 2) for value in offsets))):
                 path = Path(directory) / f"{index}.jpg"
-                media.extract_frame(
-                    video_path, at, path, width=width or config.VLM_FRAME_WIDTH, crop=crop
-                )
+                try:
+                    media.extract_frame(
+                        video_path, at, path, width=width or config.VLM_FRAME_WIDTH, crop=crop
+                    )
+                except media.MediaError:
+                    # Контекстный кадр может выйти за конец ролика — это не повод падать,
+                    # шаг просто останется без одной подсказки.
+                    continue
                 encoded.append(base64.b64encode(path.read_bytes()).decode())
         return encoded
 
