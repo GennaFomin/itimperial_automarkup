@@ -38,6 +38,11 @@ def main() -> None:
     parser.add_argument("--toy-map", type=Path, help="соответствие ролик → изделие")
     parser.add_argument("--dump", type=Path, help="куда сложить пары эталон/предсказание")
     parser.add_argument(
+        "--soft",
+        action="store_true",
+        help="мягкое сравнение: при открытом словаре точное совпадение строк слишком строго",
+    )
+    parser.add_argument(
         "--allowed",
         type=Path,
         help="наборы допустимых меток на шаг: у многометочной разметки верных ответов больше одного",
@@ -54,6 +59,22 @@ def main() -> None:
     # «put clothes». Строгий счёт занижает точность на ровном месте, поэтому считаем оба.
     allowed = json.loads(args.allowed.read_text(encoding="utf-8")) if args.allowed else {}
     loose_action = loose_object = loose_pair = 0
+    def same(left: str | None, right: str | None) -> bool:
+        """Совпадение меток. При открытом словаре строки не обязаны быть идентичны.
+
+        Списка классов у нас нет, поэтому «pick up» и «pick», «положил» и «положить» —
+        это один ответ. Сводим к общей основе и считаем совпадением вхождение одной
+        строки в другую. Умнее без таксономии заказчика не сделать.
+        """
+        left, right = (left or "").strip().lower(), (right or "").strip().lower()
+        if left == right:
+            return True
+        if not args.soft or not left or not right:
+            return False
+        head_left, head_right = left.split()[0], right.split()[0]
+        stem = min(len(head_left), len(head_right), 5)
+        return left in right or right in left or head_left[:stem] == head_right[:stem]
+
     records: list[dict] = []
     references = sorted(args.gt.glob("*.json"))
     if args.limit:
@@ -121,9 +142,9 @@ def main() -> None:
             )
             predicted_actions[got.action] += 1
             unparsed += got.action == "?"
-            action_hits += got.action == expected.action
-            object_hits += got.object == expected.object
-            pair_hits += got.action == expected.action and got.object == expected.object
+            action_hits += same(got.action, expected.action)
+            object_hits += same(got.object, expected.object)
+            pair_hits += same(got.action, expected.action) and same(got.object, expected.object)
 
             per_step = allowed.get(truth.video.id) or []
             options = per_step[expected.id] if expected.id < len(per_step) else []

@@ -59,6 +59,11 @@ VLM_CONTEXT = os.getenv("PRAXIS_VLM_CONTEXT", "0").lower() not in {"0", "false",
 # решается на большом наборе.
 # Впечатывать ли время в пиксели кадра — интерфейс вывода времени из NumPro.
 VLM_STAMP_TIME = os.getenv("PRAXIS_VLM_STAMP_TIME", "0").lower() not in {"0", "false", "no"}
+# Открытый словарь: списка классов заранее нет, модель отвечает своими словами.
+# Кейс требует уметь назвать любое действие и любой предмет.
+# Язык ответов модели — должен совпадать с языком эталона.
+LANGUAGE = os.getenv("PRAXIS_LANGUAGE", "ru")
+OPEN_VOCABULARY = os.getenv("PRAXIS_OPEN_VOCABULARY", "0").lower() not in {"0", "false", "no"}
 VLM_FRAME_LABELS = os.getenv("PRAXIS_VLM_FRAME_LABELS", "1").lower() not in {"0", "false", "no"}
 # Две ступени: сначала предмет, потом действие. Выключены. Замер на 60 роликах Charades,
 # 139 шагов, счёт по всем допустимым меткам (действие / предмет / пара):

@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from praxis import config
+
 from pathlib import Path
 
 import yaml
@@ -65,6 +67,8 @@ def check_annotation(annotation: Annotation, vocabulary: Vocabulary) -> list[str
     for step in annotation.steps:
         if not vocabulary.has_action(step.action):
             problems.append(f"шаг {step.id}: действие «{step.action}» вне словаря")
+        elif config.OPEN_VOCABULARY:
+            pass  # словаря нет — сверять не с чем, это не ошибка разметки
         elif not vocabulary.is_valid_pair(step.action, step.object):
             problems.append(f"шаг {step.id}: пара «{step.action}» + «{step.object}» вне словаря")
     return problems

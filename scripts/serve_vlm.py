@@ -56,6 +56,21 @@ OBJECT_PROMPT = """Кадры идут по порядку и показываю
 {{"object": "<предмет из списка или пустая строка>", "confidence": <0..1>}}"""
 
 
+OPEN_PROMPT = """Кадры идут по порядку и показывают один фрагмент видео: {domain}.
+{context}
+Назови, что человек или робот сделал за этот фрагмент. Списка допустимых ответов нет —
+пиши своими словами, но коротко и однообразно, {language}:
+
+* действие — один глагол («поднял», «повернул», «положил» / "pick up", "rotate", "put down");
+* предмет — одно-два слова, тот объект, с которым действие произведено.
+
+Сравни первый и последний кадр: важно, что изменилось, а не что человек держит в руках.
+Если по кадрам понять нельзя — верни "unknown" вместо выдумки.
+
+Ответь ровно двумя строками. Первая — короткое наблюдение, что изменилось. Вторая — JSON:
+{{"action": "<глагол>", "object": "<предмет>", "confidence": <0..1>}}"""
+
+
 # Калибровка уверенности по измеренной точности, а не по самооценке модели.
 CONFIDENCE_BOTH = 0.4
 CONFIDENCE_ACTION_ONLY = 0.25
@@ -104,6 +119,10 @@ class Request(BaseModel):
     frame_labels: bool = True
     # "both" — спросить сразу пару; "object" — только предмет (первая ступень).
     stage: str = "both"
+    # Открытый словарь: списка классов нет, модель отвечает своими словами.
+    open_vocabulary: bool = False
+    # Язык ответа. Должен совпадать с языком эталона, иначе сравнивать нечего.
+    language: str = "ru"
     segments: list[Segment]
     actions: list[str]
     objects: list[str]
@@ -168,6 +187,19 @@ def closest(value: str, allowed: list[str]) -> str | None:
         return exact[lowered]
     contained = [item for item in allowed if item.lower() in lowered or lowered in item.lower()]
     return min(contained, key=len) if contained else None
+
+
+def canonical(value: str) -> str:
+    """Единый вид свободного ответа: без регистра, пунктуации и служебных слов.
+
+    При открытом словаре модель пишет «Поднял.», «поднял деталь», «ПОДНЯЛ» — для метрики
+    это одно и то же. Ничего умнее нормализации здесь делать нельзя: сведение синонимов
+    требует знания таксономии заказчика, которой у нас нет.
+    """
+    text = value.strip().lower().strip(".,;:!?\"'«»")
+    for prefix in ("человек ", "робот ", "он ", "она "):
+        text = text.removeprefix(prefix)
+    return " ".join(text.split())[:64]
 
 
 def parse_nested(text: str) -> dict:
@@ -333,6 +365,12 @@ def annotate(request: Request) -> dict:
                 "Учти порядок: взятый предмет потом куда-то кладут, открытое потом закрывают,"
                 " и два соседних шага обычно разные."
             )
+        if request.open_vocabulary:
+            return OPEN_PROMPT.format(
+                domain=request.domain or DEFAULT_DOMAIN,
+                context=("\n" + "\n".join(lines) + "\n") if lines else "",
+                language="по-английски" if request.language == "en" else "по-русски",
+            )
         if request.stage == "object":
             return OBJECT_PROMPT.format(
                 domain=request.domain or DEFAULT_DOMAIN,
@@ -454,6 +492,21 @@ def _apply(segment, answer: dict, request: Request, text: str) -> dict:
     # На второй ступени список действий сужен под найденный предмет — притягивать надо
     # к нему, иначе сужение теряется на последнем шаге.
     choices = segment.actions or request.actions
+    if request.open_vocabulary:
+        # Ответ не притягиваем ни к какому списку — его нет. Только приводим к единому виду.
+        action = canonical(str(answer.get("action", "")))
+        obj = canonical(str(answer.get("object", "")))
+        confidence = CONFIDENCE_BOTH if (action and obj) else CONFIDENCE_ACTION_ONLY
+        if not action or action == "unknown":
+            action, confidence = "unknown", CONFIDENCE_NONE
+        return {
+            "id": segment.id,
+            "action": action,
+            "object": obj or None,
+            "alternatives": [],
+            "confidence": round(confidence, 3),
+            "raw": text.strip()[:200],
+        }
     action = closest(str(answer.get("action", "")), choices)
     objects = (
         request.pairs.get(action, request.objects)
