@@ -81,7 +81,8 @@ def upload(client: TestClient, path: Path):
 
 def test_full_cycle_upload_edit_export(client, videos):
     created = upload(client, videos["ok"])
-    assert created.status_code == 200, created.text
+    assert created.status_code == 202, created.text
+    assert created.json()["job_id"] == created.json()["id"]
     video_id = created.json()["id"]
 
     record = client.get(f"/api/videos/{video_id}").json()
@@ -293,3 +294,37 @@ def test_run_is_logged_with_everything_the_case_demands(client, videos):
     payload = json.loads(runs[0]["payload"])
     assert payload["model_version"] and payload["latency_ms"] > 0
     assert payload["error"] is None
+
+
+def test_edits_are_recorded_per_field(client, videos):
+    """«Поля правятся независимо» — значит и в данных должно быть видно, какое поле правили."""
+    video_id = upload(client, videos["ok"]).json()["id"]
+    annotation = Annotation.model_validate(
+        client.get(f"/api/videos/{video_id}/annotation").json()["annotation"]
+    )
+
+    annotation.steps[0].action = "screw"
+    client.put(f"/api/videos/{video_id}/annotation", json=annotation.model_dump(mode="json"))
+
+    annotation.steps[1].start_sec = annotation.steps[0].end_sec = 3.0
+    client.put(f"/api/videos/{video_id}/annotation", json=annotation.model_dump(mode="json"))
+
+    saves = [json.loads(event["payload"]) for event in store.events(video_id, "save")]
+    assert saves[0]["changed"] == {
+        "boundary": 0,
+        "action": 1,
+        "object": 0,
+        "keyframe": 0,
+        "added": 0,
+        "removed": 0,
+    }
+    assert saves[1]["changed"]["boundary"] == 2, "сдвиг стыка меняет границы обоих шагов"
+    assert saves[1]["changed"]["action"] == 0, "второе сохранение не повторяет первую правку"
+
+
+def test_job_reports_stage_and_progress(client, videos):
+    created = upload(client, videos["ok"]).json()
+    assert created["progress"] == 0.0 and created["timeout_sec"] > 0
+
+    record = client.get(f"/api/videos/{created['id']}").json()
+    assert record["stage"] == "done" and record["progress"] == 1.0

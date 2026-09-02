@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from praxis import config, jobs, media, store
-from praxis.schema import Annotation, to_contract_csv, to_contract_json, to_csv, to_json
+from praxis.schema import Annotation, diff_steps, to_contract_csv, to_contract_json, to_csv, to_json
 from praxis.vocab import check_annotation, load_vocabulary
 
 
@@ -44,6 +44,11 @@ def _video_or_404(video_id: str) -> dict:
     return record
 
 
+# Доля пути по стадиям. Точной шкалы у задачи нет, но «где мы сейчас» пользователю
+# нужнее точности: кейс требует progress, а не секундомер.
+STAGE_PROGRESS = {"decode": 0.3, "recognize": 0.7, "done": 1.0, "failed": 1.0}
+
+
 def _public(record: dict) -> dict:
     return {
         "id": record["id"],
@@ -53,6 +58,9 @@ def _public(record: dict) -> dict:
         "width": record["width"],
         "height": record["height"],
         "status": record["status"],
+        # Прогресс задания: на какой стадии прогон и какая доля пути пройдена.
+        "stage": record["stage"],
+        "progress": STAGE_PROGRESS.get(record["stage"], 0.0),
         "error": record["error"],
         # Прогон мог пройти не в полную силу — это не ошибка, но и не тишина.
         "warnings": json.loads(record["warnings"]) if record["warnings"] else [],
@@ -64,7 +72,10 @@ def _public(record: dict) -> dict:
     }
 
 
-@app.post("/api/videos")
+# Кейс задаёт контур задания как «202 + job_id». Идентификатор ролика и задания у нас
+# один: перезапуск обработки не создаёт новую сущность, а история прогонов живёт в
+# журнале событий.
+@app.post("/api/videos", status_code=202)
 async def upload_video(background: BackgroundTasks, file: UploadFile) -> dict:
     video_id = uuid.uuid4().hex[:12]
     raw = await file.read()
@@ -75,7 +86,15 @@ async def upload_video(background: BackgroundTasks, file: UploadFile) -> dict:
 
     store.create_video(video_id, file.filename or "video.mp4", meta)
     background.add_task(jobs.process_video, video_id)
-    return {"id": video_id, **meta, "status": "queued"}
+    return {
+        "id": video_id,
+        "job_id": video_id,
+        **meta,
+        "status": "queued",
+        "stage": None,
+        "progress": 0.0,
+        "timeout_sec": config.JOB_TIMEOUT_SEC,
+    }
 
 
 @app.get("/api/videos")
@@ -112,12 +131,21 @@ async def get_annotation(video_id: str, source: str = "current") -> dict:
 
 @app.put("/api/videos/{video_id}/annotation")
 async def save_annotation(video_id: str, annotation: Annotation) -> dict:
-    _video_or_404(video_id)
     if annotation.video.id != video_id:
         raise HTTPException(400, "идентификатор видео в разметке не совпадает с адресом")
+    # Что именно поправили: разницу считаем от предыдущего состояния, а не от прогноза,
+    # иначе каждое автосохранение повторяло бы всю накопленную правку.
+    record = _video_or_404(video_id)
+    previous = store.annotation_json(record)
+    changes = (
+        diff_steps(Annotation.model_validate_json(previous).steps, annotation.steps)
+        if previous
+        else {}
+    )
+
     # Пишем только правку. Прогноз модели неизменяем — на нём считаются метрики.
     store.save_review(video_id, annotation.model_dump_json())
-    store.log_event(video_id, "save", {"steps": len(annotation.steps)})
+    store.log_event(video_id, "save", {"steps": len(annotation.steps), "changed": changes})
     problems = check_annotation(annotation, load_vocabulary(config.VOCAB_PATH))
     return {"saved": True, "problems": problems}
 

@@ -239,7 +239,16 @@ def process_video(video_id: str) -> None:
     if record is None:
         return
 
-    store.update_video(video_id, status="processing", error=None)
+    store.update_video(video_id, status="processing", stage="decode", error=None)
+
+    def checkpoint(stage: str) -> None:
+        """Отметить стадию и проверить, не пора ли сдаваться по времени."""
+        if time.perf_counter() - started > config.JOB_TIMEOUT_SEC:
+            raise TimeoutError(
+                f"прогон превысил {config.JOB_TIMEOUT_SEC:.0f} с на стадии «{stage}»"
+            )
+        store.update_video(video_id, stage=stage)
+
     try:
         directory = store.video_dir(video_id)
         source = directory / "source.mp4"
@@ -257,6 +266,7 @@ def process_video(video_id: str) -> None:
         motion = [round(float(value), 4) for value in perception.motion]
         strip = media.filmstrip(source, meta.duration_sec, directory / "strip")
         decode_ms = int(round((time.perf_counter() - at_decode) * 1000))
+        checkpoint("recognize")
 
         result = annotate_clip(source, meta, perception, started)
         annotation = result.annotation
@@ -284,6 +294,7 @@ def process_video(video_id: str) -> None:
         store.update_video(
             video_id,
             status="done",
+            stage="done",
             warnings=json.dumps(annotation.provenance.warnings, ensure_ascii=False),
             processing_sec=elapsed,
             prediction=annotation.model_dump_json(),
@@ -296,6 +307,7 @@ def process_video(video_id: str) -> None:
         store.update_video(
             video_id,
             status="failed",
+            stage="failed",
             error=message,
             processing_sec=round(time.perf_counter() - started, 3),
         )

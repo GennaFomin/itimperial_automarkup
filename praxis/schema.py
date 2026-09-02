@@ -265,6 +265,38 @@ def contract_steps(annotation: Annotation) -> list[dict]:
     ]
 
 
+def diff_steps(before: list[Step], after: list[Step]) -> dict[str, int]:
+    """Что именно человек поправил: границы, действие, предмет или ключевой кадр.
+
+    Кейс требует, чтобы поля правились независимо, и проверять их предлагает по
+    отдельности. Чтобы это было видно в данных, а не только в интерфейсе, разница
+    считается на сервере: клиент присылает разметку целиком, но по паре «было/стало»
+    понятно, какое поле менялось. Из этих чисел видно, где модель ошибается чаще —
+    во времени или в семантике.
+    """
+    old = {step.id: step for step in before}
+    counts = {
+        "boundary": 0,
+        "action": 0,
+        "object": 0,
+        "keyframe": 0,
+        "added": 0,
+        "removed": 0,
+    }
+    for step in after:
+        previous = old.pop(step.id, None)
+        if previous is None:
+            counts["added"] += 1
+            continue
+        if (previous.start_sec, previous.end_sec) != (step.start_sec, step.end_sec):
+            counts["boundary"] += 1
+        counts["action"] += previous.action != step.action
+        counts["object"] += previous.object != step.object
+        counts["keyframe"] += previous.keyframe_sec != step.keyframe_sec
+    counts["removed"] = len(old)
+    return counts
+
+
 def to_contract_json(annotation: Annotation, indent: int | None = 2) -> str:
     payload = {
         "schema_version": SCHEMA_VERSION,

@@ -73,6 +73,9 @@ VLM_FRAMES = int(os.getenv("PRAXIS_VLM_FRAMES", "8"))
 VLM_FRAME_WIDTH = int(os.getenv("PRAXIS_VLM_FRAME_WIDTH", "640"))
 # Ставка за час GPU: из неё и секунд работы моделей считается стоимость прогона,
 # которую кейс требует показывать на финале.
+# Предел на обработку одного ролика. Кейс требует укладываться в две минуты и требует
+# у задания таймаут: зависший прогон обязан падать, а не висеть в processing вечно.
+JOB_TIMEOUT_SEC = float(os.getenv("PRAXIS_JOB_TIMEOUT_SEC", "300"))
 GPU_HOUR_COST = float(os.getenv("PRAXIS_GPU_HOUR_COST", "60"))
 VLM_TIMEOUT = float(os.getenv("PRAXIS_VLM_TIMEOUT", "120"))
 
