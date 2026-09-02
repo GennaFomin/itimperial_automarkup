@@ -64,7 +64,8 @@ OPEN_PROMPT = """Кадры идут по порядку и показывают
 * действие — один глагол («поднял», «повернул», «положил» / "pick up", "rotate", "put down");
 * предмет — одно-два слова, тот объект, с которым действие произведено.
 
-Сравни первый и последний кадр: важно, что изменилось, а не что человек держит в руках.
+Сравни, что было в начале и что стало в конце: важно изменение, а не то, что человек
+держит в руках в середине.
 Если по кадрам понять нельзя — верни "unknown" вместо выдумки.
 
 Ответь ровно двумя строками. Первая — короткое наблюдение, что изменилось. Вторая — JSON:
@@ -121,6 +122,8 @@ class Request(BaseModel):
     stage: str = "both"
     # Открытый словарь: списка классов нет, модель отвечает своими словами.
     open_vocabulary: bool = False
+    # Крайние кадры взяты снаружи шага и показывают состояние до и после.
+    context_frames: bool = False
     # Язык ответа. Должен совпадать с языком эталона, иначе сравнивать нечего.
     language: str = "ru"
     segments: list[Segment]
@@ -139,7 +142,18 @@ class Request(BaseModel):
     mode: str = "generate"
 
 
-def frame_label(index: int, total: int) -> str:
+def frame_label(index: int, total: int, context: bool = False) -> str:
+    """Подпись кадра. При контексте крайние кадры подписаны как состояние до и после."""
+    if context and total >= 3:
+        if index == 0:
+            return "Кадр ДО начала шага (что было):"
+        if index == total - 1:
+            return "Кадр ПОСЛЕ конца шага (что стало):"
+        return f"Кадр {index} из {total - 2}, внутри шага:"
+    return _frame_label(index, total)
+
+
+def _frame_label(index: int, total: int) -> str:
     """Подпись кадра.
 
     Половина словаря EPIC — это пары, различимые только направлением времени: взять и
@@ -451,7 +465,12 @@ def annotate(request: Request) -> dict:
         content = []
         for index, image in enumerate(images):
             if request.frame_labels:
-                content.append({"type": "text", "text": frame_label(index, len(images))})
+                content.append(
+                    {
+                        "type": "text",
+                        "text": frame_label(index, len(images), request.context_frames),
+                    }
+                )
             content.append({"type": "image", "image": image})
         content.append({"type": "text", "text": build_prompt(segment)})
         messages = [{"role": "user", "content": content}]

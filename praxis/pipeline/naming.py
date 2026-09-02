@@ -167,7 +167,12 @@ class HttpNamer:
         crop: tuple[float, float, float, float] | None = None,
         width: int | None = None,
     ) -> list[str]:
-        """Кадры, равномерно разбросанные внутри шага, плюс его ключевой кадр."""
+        """Кадры, равномерно разбросанные внутри шага, плюс его ключевой кадр.
+
+        При включённом контексте добавляются два кадра снаружи — до начала и после конца.
+        Они нужны для глаголов состояния: «взял» и «положил» дают почти одинаковую
+        середину действия и различаются только тем, где предмет был до и оказался после.
+        """
         span = step.end_sec - step.start_sec
         offsets = [
             step.start_sec + span * (index + 0.5) / self.frames_per_step
@@ -175,6 +180,9 @@ class HttpNamer:
         ]
         if step.keyframe_sec is not None:
             offsets.append(step.keyframe_sec)
+        if config.CONTEXT_FRAMES > 0:
+            offsets.append(max(0.0, step.start_sec - config.CONTEXT_FRAMES))
+            offsets.append(step.end_sec + config.CONTEXT_FRAMES)
 
         encoded: list[str] = []
         with tempfile.TemporaryDirectory() as directory:

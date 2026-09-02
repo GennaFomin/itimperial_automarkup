@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import argparse
 import collections
+import concurrent.futures
+import threading
 import csv
 import json
 import subprocess
@@ -156,6 +158,10 @@ def main() -> None:
     parser.add_argument("--max-steps", type=int, default=12)
     parser.add_argument("--per-video", type=int, default=2, help="сколько окон с одной записи")
     parser.add_argument("--view", default="C10095_rgb", help="экзоцентрическая камера")
+    parser.add_argument(
+        "--workers", type=int, default=6,
+        help="сколько записей качать параллельно: узкое место — сеть, а не процессор",
+    )
     args = parser.parse_args()
 
     clips_dir, gt_dir = args.out / "clips", args.out / "gt"
@@ -167,24 +173,27 @@ def main() -> None:
 
     verbs, nouns = set(), set()
     allowed: dict[str, list] = {}
+    lock = threading.Lock()
     written = 0
-    for video, actions in sorted(by_video.items()):
-        if written >= args.clips:
-            break
+
+    def handle(video: str, actions: list[dict]) -> None:
+        """Один исходник: вырезать окна и записать эталоны. Вызывается из пула потоков."""
+        nonlocal written
         sequence = drop_overlaps(actions)
         chunks = windows(sequence, args.span, args.min_steps, args.max_steps)[: args.per_video]
         if not chunks:
-            continue
+            return
         try:
             source = signed_url(f"recordings/{video}")
-        except Exception as error:  # noqa: BLE001 — недоступная запись не должна ронять сборку
+        except Exception as error:  # noqa: BLE001 — недоступная запись не рушит сборку
             print(f"  {video}: пропуск ({error})", flush=True)
-            continue
+            return
 
         session = video.split("/")[0].removeprefix("nusar-2021_action_both_")
         for order, chunk in enumerate(chunks):
-            if written >= args.clips:
-                break
+            with lock:
+                if written >= args.clips:
+                    return
             offset = chunk[0]["start"]
             span = chunk[-1]["end"] - offset
             name = f"{session}_{order}"
@@ -197,13 +206,11 @@ def main() -> None:
                 continue
 
             steps = []
-            for index, item in enumerate(chunk):
+            for item in chunk:
                 start = round(item["start"] - offset, 3)
                 end = round(min(item["end"] - offset, meta["duration_sec"]), 3)
                 if end - start < 0.2:
                     continue
-                verbs.add(item["verb"])
-                nouns.add(item["noun"])
                 steps.append(
                     Step(
                         id=len(steps), start_sec=start, end_sec=end,
@@ -227,9 +234,18 @@ def main() -> None:
             (gt_dir / f"{name}.json").write_text(
                 annotation.model_dump_json(indent=1), encoding="utf-8"
             )
-            allowed[name] = allowed_labels(actions, chunk)[: len(annotation.steps)]
-            written += 1
-            print(f"  {written}/{args.clips} {name}: {len(steps)} действий за {span:.1f} с", flush=True)
+            with lock:
+                allowed[name] = allowed_labels(actions, chunk)[: len(annotation.steps)]
+                for item in chunk:
+                    verbs.add(item["verb"])
+                    nouns.add(item["noun"])
+                written += 1
+                print(f"  {written}/{args.clips} {name}: {len(steps)} действий за {span:.1f} с", flush=True)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as pool:
+        futures = [pool.submit(handle, video, actions) for video, actions in sorted(by_video.items())]
+        for future in concurrent.futures.as_completed(futures):
+            future.result()
 
     (args.out / "allowed.json").write_text(
         json.dumps(allowed, ensure_ascii=False, indent=1), encoding="utf-8"
