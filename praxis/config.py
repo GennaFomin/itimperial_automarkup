@@ -120,6 +120,12 @@ FEATURE_CACHE = os.getenv("PRAXIS_FEATURE_CACHE", "1").lower() not in {"0", "fal
 #   атомарная (Assembly101 fine, 9.9 шага по 1 с): штраф 2 -> F1@0.5 0.401
 # Рекурсивный разбор проигрывает обоим на любом пороге, лучшее 0.251.
 # На сколько сигм выше среднего должен быть выброс, чтобы стать границей.
+# Поправка границ по измеренной знаковой ошибке. На валидации начала оказались
+# позже эталона на 0.67 с, концы почти без смещения.
+# Доля от максимума движения внутри сегмента, ниже которой край считается паузой.
+TRIM_SHARE = float(os.getenv("PRAXIS_TRIM_SHARE", "0.0"))
+START_SHIFT = float(os.getenv("PRAXIS_START_SHIFT", "0.0"))
+END_SHIFT = float(os.getenv("PRAXIS_END_SHIFT", "0.0"))
 PEAK_SIGMA = float(os.getenv("PRAXIS_PEAK_SIGMA", "1.0"))
 TSM_THRESHOLD = float(os.getenv("PRAXIS_TSM_THRESHOLD", "0.35"))
 TSM_PENALTY = float(os.getenv("PRAXIS_TSM_PENALTY", "2.0"))

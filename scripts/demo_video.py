@@ -50,6 +50,14 @@ def row(steps: list[dict], duration: float, top: int, title: str) -> list[str]:
             f"drawbox=x={start:.1f}:y={y}:w={width:.1f}:h={BAR}:"
             f"color={COLORS[index % len(COLORS)]}@1:t=fill"
         )
+        # Ключевой кадр — доказательство шага, кейс требует его отдельно. Отмечаем
+        # тонкой светлой чертой внутри сегмента.
+        keyframe = step.get("keyframe_sec")
+        if keyframe is not None:
+            mark = LEFT + span * float(keyframe) / duration
+            parts.append(
+                f"drawbox=x={mark:.1f}:y={y}:w=2:h={BAR}:color=0xF2F5F9@0.9:t=fill"
+            )
         label = clean(f"{step['action']} {step.get('object') or ''}".strip())
         if width > 70 and label:
             parts.append(

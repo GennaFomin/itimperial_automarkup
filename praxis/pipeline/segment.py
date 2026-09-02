@@ -204,3 +204,26 @@ def pick_keyframe(features: np.ndarray, motion: np.ndarray, start: int, end: int
     blur = blur / (blur.max() or 1.0)
 
     return start + int(np.argmin(distance + 0.5 * blur))
+
+
+def trim_to_activity(
+    motion: "np.ndarray", first: int, last: int, share: float
+) -> tuple[int, int]:
+    """Ужать сегмент до той части, где действительно что-то происходит.
+
+    Зачем. Разбиение по смене признаков непрерывно: конец одного сегмента и есть начало
+    следующего. Из-за этого следующее действие получает началом момент, когда предыдущее
+    только закончилось, — человек ещё стоит с пакетом, а шаг «пошёл» уже начался. Кейс же
+    прямо разрешает паузы между шагами, и эталонная разметка их содержит.
+
+    Порог берётся от собственного максимума сегмента, а не от общего по ролику: в тихом
+    ролике всё движение слабое, и общий порог срезал бы шаг целиком.
+    """
+    window = motion[first:last]
+    if len(window) < 3:
+        return first, last
+    level = float(window.max()) * share
+    active = [index for index, value in enumerate(window) if value >= level]
+    if not active:
+        return first, last
+    return first + active[0], first + active[-1] + 1

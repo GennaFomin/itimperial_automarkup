@@ -23,7 +23,7 @@ import numpy as np
 
 from praxis import config
 from praxis.pipeline.base import Perception, PipelineResult
-from praxis.pipeline.segment import normalise, reduce_dimensions
+from praxis.pipeline.segment import normalise, reduce_dimensions, trim_to_activity
 from praxis.schema import Step, VideoMeta
 from praxis.vocab import Vocabulary
 
@@ -149,8 +149,19 @@ class SimilaritySegmenter:
             # Простой отрезок — это пауза, а не шаг: кейс разрешает пробелы между шагами.
             if np.mean(perception.motion[first:last]) < np.mean(perception.motion) * config.IDLE_RATIO:
                 continue
-            start = perception.offset + first / perception.fps
-            end = min(meta.duration_sec, perception.offset + last / perception.fps)
+            # Края сегмента срезаются по активности: иначе следующий шаг начинается ровно
+            # там, где кончился предыдущий, и захватывает паузу между ними.
+            if config.TRIM_SHARE > 0:
+                first, last = trim_to_activity(
+                    perception.motion, first, last, config.TRIM_SHARE
+                )
+            # Калиброванный сдвиг границ: признаки считаются скользящим окном, и момент
+            # смены размазан на его половину. Величина берётся из замера знаковой ошибки
+            # на валидации, а не из общих соображений.
+            start = max(0.0, perception.offset + first / perception.fps + config.START_SHIFT)
+            end = min(
+                meta.duration_sec, perception.offset + last / perception.fps + config.END_SHIFT
+            )
             if end - start < config.MIN_SEGMENT_SEC:
                 continue
             steps.append(

@@ -174,6 +174,8 @@ def evaluate_annotations(items: list[tuple[Annotation, Annotation | None, str]])
     """Оценка по уже загруженным разметкам — этим пользуется подбор параметров."""
     per_clip = []
     boundary_errors: list[float] = []
+    start_bias: list[float] = []
+    end_bias: list[float] = []
     action_hits = object_hits = both_hits = matched_total = 0
     latencies: list[float] = []
     # Пул по всему набору для метрики кейса: «затем считаем precision, recall и F1»
@@ -212,6 +214,11 @@ def evaluate_annotations(items: list[tuple[Annotation, Annotation | None, str]])
             prediction, reference = predicted[predicted_index], truth[truth_index]
             boundary_errors.append(abs(prediction.start - reference.start))
             boundary_errors.append(abs(prediction.end - reference.end))
+            # Знаковая ошибка отличает систематический сдвиг от разброса: если начала
+            # стабильно отрицательны, границу ставим раньше времени, и это лечится
+            # сдвигом, а не переделкой метода.
+            start_bias.append(prediction.start - reference.start)
+            end_bias.append(prediction.end - reference.end)
             matched_total += 1
             action_hits += prediction.action == reference.action
             object_hits += prediction.object == reference.object
@@ -254,6 +261,8 @@ def evaluate_annotations(items: list[tuple[Annotation, Annotation | None, str]])
         "case_f1_macro": mean([clip["case_f1"] for clip in per_clip]),
         "boundary_mae_sec": mean(boundary_errors),
         "boundary_p95_sec": percentile(boundary_errors, 0.95),
+        "start_bias_sec": mean(start_bias),
+        "end_bias_sec": mean(end_bias),
         "matched_segments": matched_total,
         "action_accuracy": round(action_hits / matched_total, 3) if matched_total else 0.0,
         "object_accuracy": round(object_hits / matched_total, 3) if matched_total else 0.0,

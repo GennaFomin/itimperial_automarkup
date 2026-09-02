@@ -26,16 +26,21 @@ from praxis.metrics import evaluate_annotations
 from praxis.schema import Annotation, VideoMeta
 
 
-def apply_overrides(spec: str) -> str:
-    """Имя метода и переменные окружения из строки вида «name:VAR=1:VAR2=2»."""
+def apply_overrides(spec: str, baseline: dict) -> str:
+    """Имя метода и его переменные из строки вида «name:VAR=1:VAR2=2».
+
+    Настройки восстанавливаются из снимка перед каждым методом: иначе переменная,
+    заданная одному варианту, протекает во все последующие, и сравнение врёт.
+    """
+    for attribute, value in baseline.items():
+        setattr(config, attribute, value)
+
     name, *pairs = spec.split(":")
     for pair in pairs:
         key, _, value = pair.partition("=")
-        os.environ[key] = value
-        # config читается при импорте, поэтому значение надо положить и туда.
         attribute = key.removeprefix("PRAXIS_")
         if hasattr(config, attribute):
-            current = getattr(config, attribute)
+            current = baseline.get(attribute)
             setattr(config, attribute, type(current)(value) if current is not None else value)
     return name
 
@@ -64,11 +69,18 @@ def main() -> None:
 
     print(f"\nроликов: {len(truths)}, эталон: "
           f"{statistics.fmean(len(t.steps) for t in truths.values()):.1f} шага на ролик\n")
+    # Снимок настроек: к нему возвращаемся перед каждым методом.
+    baseline = {
+        name: getattr(config, name)
+        for name in dir(config)
+        if name.isupper() and isinstance(getattr(config, name), (int, float, str, bool))
+    }
+
     print(f"{'метод':<34}{'F1@0.1':>8}{'F1@0.25':>9}{'F1@0.5':>8}{'90% для F1@0.5':>17}"
           f"{'границы':>9}{'шагов':>7}{'с/ролик':>9}")
 
     for spec in args.methods:
-        name = apply_overrides(spec)
+        name = apply_overrides(spec, baseline)
         config.PIPELINE = name
         items, latencies, counts = [], [], []
         for stem, truth in truths.items():

@@ -89,6 +89,8 @@ def main() -> None:
     print()
     print(f"{'ошибка границ, среднее':<28}{summary['boundary_mae_sec']:>18.3f} с")
     print(f"{'ошибка границ, p95':<28}{summary['boundary_p95_sec']:>18.3f} с")
+    print(f"{'сдвиг начала':<28}{summary['start_bias_sec']:>18.3f} с   (минус — ставим раньше)")
+    print(f"{'сдвиг конца':<28}{summary['end_bias_sec']:>18.3f} с")
     print(f"{'точность действия':<28}{summary['action_accuracy']:>18.3f}")
     print(f"{'точность объекта':<28}{summary['object_accuracy']:>18.3f}")
     print(f"{'точность пары':<28}{summary['action_object_accuracy']:>18.3f}")
