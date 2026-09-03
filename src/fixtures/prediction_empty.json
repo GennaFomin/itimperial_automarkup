@@ -1,0 +1,21 @@
+{
+  "schema_version": "1.0",
+  "prediction_id": "p_000000",
+  "job_id": "j_000000",
+  "model_version": "pipeline-0.3",
+  "vocab_version": "1.0",
+  "created_at": "2026-09-03T10:01:26Z",
+  "video": {
+    "duration_ms": 42000,
+    "fps": 30,
+    "width": 1920,
+    "height": 1080
+  },
+  "segments": [],
+  "stats": {
+    "latency_ms": 21000,
+    "cost_usd": 0.03,
+    "frames_decoded": 1260
+  },
+  "errors": []
+}
