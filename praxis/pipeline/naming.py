@@ -349,10 +349,16 @@ class RemoteVlmNamer(HttpNamer):
             named = by_id.get(step.id)
             if not named:
                 continue
-            if named.get("action") and vocabulary.has_action(named["action"]):
-                step.action = named["action"]
+            # При открытом словаре сверять ответ не с чем: модель отвечает своими словами,
+            # и отбрасывать всё, чего нет в списке, значило бы отбросить каждый ответ.
+            # При закрытом словаре проверка остаётся — выдуманная метка не проходит.
+            action = named.get("action")
+            if action and (config.OPEN_VOCABULARY or vocabulary.has_action(action)):
+                step.action = action
             obj = named.get("object")
-            step.object = obj if obj and vocabulary.has_object(obj) else None
+            step.object = (
+                obj if obj and (config.OPEN_VOCABULARY or vocabulary.has_object(obj)) else None
+            )
             if named.get("confidence") is not None:
                 step.confidence = round(float(named["confidence"]), 3)
 
@@ -501,10 +507,16 @@ class ClipNamer(HttpNamer):
             named = by_id.get(step.id)
             if not named:
                 continue
-            if named.get("action") and vocabulary.has_action(named["action"]):
-                step.action = named["action"]
+            # При открытом словаре сверять ответ не с чем: модель отвечает своими словами,
+            # и отбрасывать всё, чего нет в списке, значило бы отбросить каждый ответ.
+            # При закрытом словаре проверка остаётся — выдуманная метка не проходит.
+            action = named.get("action")
+            if action and (config.OPEN_VOCABULARY or vocabulary.has_action(action)):
+                step.action = action
             obj = named.get("object")
-            step.object = obj if obj and vocabulary.has_object(obj) else None
+            step.object = (
+                obj if obj and (config.OPEN_VOCABULARY or vocabulary.has_object(obj)) else None
+            )
             if named.get("confidence") is not None:
                 step.confidence = round(float(named["confidence"]), 3)
 

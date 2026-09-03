@@ -174,3 +174,27 @@ def test_namer_request_carries_every_mode_flag(monkeypatch, tmp_path):
     assert sent.get("open_vocabulary") is True
     assert sent.get("language") == "en"
     assert sent.get("context_frames") is True
+
+
+def test_open_vocabulary_keeps_answers_outside_the_list(monkeypatch, tmp_path):
+    """Свободный ответ обязан попасть в шаг, даже если такого слова нет в словаре."""
+    from praxis import config
+    from praxis.pipeline import naming
+    from praxis.schema import Step, VideoMeta
+    from praxis.vocab import load_vocabulary
+
+    class Fake(naming.RemoteVlmNamer):
+        def _frames(self, *args, **kwargs):
+            return ["x"]
+
+        def _post(self, path, payload, base_url=None):
+            return {"results": [{"id": 0, "action": "poured", "object": "kettle", "confidence": 0.4}]}
+
+    for name, value in dict(OPEN_VOCABULARY=True, TRACK_BASE_URL="", VLM_CONTEXT=False,
+                            VLM_TWO_STAGE=False, VLM_RESCORE=0).items():
+        monkeypatch.setattr(config, name, value)
+    meta = VideoMeta(id="v", filename="v.mp4", duration_sec=10.0, fps=30.0, width=1280, height=720)
+    steps = [Step(id=0, start_sec=0.0, end_sec=5.0, action="attach", object=None,
+                  keyframe_sec=2.5, confidence=None)]
+    out = Fake("http://127.0.0.1:1").name_steps(tmp_path / "v.mp4", meta, steps, load_vocabulary(), None)
+    assert out.steps[0].action == "poured" and out.steps[0].object == "kettle"
