@@ -125,9 +125,11 @@ completely and the uniform split collapsed from 0.627 to 0.288. The lesson is th
 benchmark can flatter a trivial method, and only a second benchmark exposes it.
 
 **The winner came from the papers, not from tuning.** Penalised kernel change-point
-detection — the method behind `ruptures`, applied to video by Perochon and Oudre — beat
-everything we had written ourselves, and it decides the number of steps on its own
-instead of being told.
+detection — Arlot, Celisse and Harchaoui's formulation, implemented as described in
+Truong, Oudre and Vayatis, applied to video by Perochon and Oudre — beat everything we
+had written ourselves, and it decides the number of steps on its own instead of being
+told. The exact mapping from our code to the equations is in
+[docs/papers/](docs/papers/).
 
 ---
 
