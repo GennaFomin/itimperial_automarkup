@@ -5,11 +5,22 @@ services:
       - "8000:8000"
     volumes:
       - praxis-work:/data
+    # Модели живут на GPU-машине и доступны через SSH-туннель на хосте:
+    #   ssh -N -L 8100:127.0.0.1:8100 -L 8102:127.0.0.1:8102 -L 8104:127.0.0.1:8104 dl5
+    # Контейнер достаёт до туннеля через host.docker.internal.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
-      # Пусто — работает заглушка сегментатора; адрес vLLM подставляется на площадке.
-      PRAXIS_VLM_BASE_URL: "${PRAXIS_VLM_BASE_URL:-}"
-      PRAXIS_VLM_MODEL: "${PRAXIS_VLM_MODEL:-Qwen/Qwen3-VL-8B-Instruct}"
-      PRAXIS_PIPELINE: "${PRAXIS_PIPELINE:-stub}"
+      PRAXIS_PIPELINE: "${PRAXIS_PIPELINE:-learned-boundaries}"
+      PRAXIS_TAS_BASE_URL: "${PRAXIS_TAS_BASE_URL:-http://host.docker.internal:8104}"
+      PRAXIS_TAS_THRESHOLD: "${PRAXIS_TAS_THRESHOLD:-0.7}"
+      PRAXIS_FEATURES: "${PRAXIS_FEATURES:-video}"
+      PRAXIS_VIDEO_BASE_URL: "${PRAXIS_VIDEO_BASE_URL:-http://host.docker.internal:8102}"
+      PRAXIS_NAMER: "${PRAXIS_NAMER:-vlm}"
+      PRAXIS_VLM_BASE_URL: "${PRAXIS_VLM_BASE_URL:-http://host.docker.internal:8100}"
+      PRAXIS_OPEN_VOCABULARY: "${PRAXIS_OPEN_VOCABULARY:-1}"
+      PRAXIS_LANGUAGE: "${PRAXIS_LANGUAGE:-ru}"
+      PRAXIS_CONTEXT_FRAMES: "${PRAXIS_CONTEXT_FRAMES:-0.6}"
       PRAXIS_VOCAB: "${PRAXIS_VOCAB:-}"
 
 volumes:

@@ -328,3 +328,23 @@ def test_job_reports_stage_and_progress(client, videos):
 
     record = client.get(f"/api/videos/{created['id']}").json()
     assert record["stage"] == "done" and record["progress"] == 1.0
+
+
+def test_unavailable_boundary_detector_falls_back_and_is_reported(tmp_path, monkeypatch, videos):
+    """Сегментатор по умолчанию — обучаемый детектор на GPU-машине. Без него прогон
+    обязан резать ядровым change-point и сказать об этом в warnings, а не отдавать один
+    шаг на весь ролик под видом результата."""
+    monkeypatch.setattr(config, "WORK_DIR", tmp_path / "work")
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "work" / "praxis.db")
+    monkeypatch.setattr(config, "PIPELINE", "learned-boundaries")
+    monkeypatch.setattr(config, "TAS_BASE_URL", "http://127.0.0.1:9")  # порт закрыт всегда
+
+    with TestClient(app=_app()) as client:
+        video_id = upload(client, videos["ok"]).json()["id"]
+        record = client.get(f"/api/videos/{video_id}").json()
+
+    assert record["status"] == "done", "откат не должен ронять прогон"
+    assert any("границы" in w and "change-point" in w for w in record["warnings"]), record["warnings"]
+    provenance = Annotation.model_validate_json(store.get_video(video_id)["prediction"]).provenance
+    assert provenance.models["segmenter"] == "tsm-kernel"
+

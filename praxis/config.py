@@ -22,7 +22,7 @@ ALLOWED_SUFFIXES = {".mp4", ".mov"}
 # Ядровой change-point со штрафом за сегмент. Выбран измерением: на 90 роликах даёт
 # F1@0.5 0.507 против 0.429 у прежнего motion-dp, а число шагов выводит сам, тогда как
 # базовым методам его приходится подсказывать. Полный разбор — docs/BOUNDARIES.md.
-PIPELINE = os.getenv("PRAXIS_PIPELINE", "tsm-kernel")
+PIPELINE = os.getenv("PRAXIS_PIPELINE", "learned-boundaries")
 
 # Куда ходить за VLM. Пусто — значит семантика недоступна и работает запасной путь.
 VLM_BASE_URL = os.getenv("PRAXIS_VLM_BASE_URL", "")
@@ -146,7 +146,7 @@ TAS_BASE_URL = os.getenv("PRAXIS_TAS_BASE_URL", "")
 ENSEMBLE_TOLERANCE_SEC = float(os.getenv("PRAXIS_ENSEMBLE_TOLERANCE_SEC", "0.5"))
 ENSEMBLE_CONFIRM = float(os.getenv("PRAXIS_ENSEMBLE_CONFIRM", "0.3"))
 ENSEMBLE_STRONG = float(os.getenv("PRAXIS_ENSEMBLE_STRONG", "0.9"))
-TAS_THRESHOLD = float(os.getenv("PRAXIS_TAS_THRESHOLD", "0.5"))
+TAS_THRESHOLD = float(os.getenv("PRAXIS_TAS_THRESHOLD", "0.7"))
 PEAK_SIGMA = float(os.getenv("PRAXIS_PEAK_SIGMA", "1.0"))
 TSM_THRESHOLD = float(os.getenv("PRAXIS_TSM_THRESHOLD", "0.35"))
 TSM_PENALTY = float(os.getenv("PRAXIS_TSM_PENALTY", "2.0"))

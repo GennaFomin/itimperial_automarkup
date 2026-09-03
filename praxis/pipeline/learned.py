@@ -75,14 +75,13 @@ class LearnedSegmenter:
         vocabulary: Vocabulary,
         perception: Perception,
     ) -> PipelineResult:
+        if not config.TAS_BASE_URL:
+            return self._fallback(video_path, meta, vocabulary, perception, "адрес сервиса не задан")
         try:
             answer = post("/predict", {"samples": [encode(perception.appearance)]})
             scores = np.array(answer["scores"][0], dtype=np.float32)
         except (urllib.error.URLError, OSError, TimeoutError, ValueError, KeyError) as error:
-            return PipelineResult(
-                steps=[self._whole(meta, vocabulary)],
-                models={"segmenter": self.name, "segmenter_status": f"недоступен: {error}"},
-            )
+            return self._fallback(video_path, meta, vocabulary, perception, f"недоступен: {error}")
 
         minimum = max(1, int(config.MIN_SEGMENT_SEC * perception.fps))
         cuts = peaks_above(scores, config.TAS_THRESHOLD, minimum)
@@ -105,6 +104,20 @@ class LearnedSegmenter:
         if not steps:
             steps = [self._whole(meta, vocabulary)]
         return PipelineResult(steps=steps, models={"segmenter": self.name})
+
+    def _fallback(
+        self, video_path: Path, meta: VideoMeta, vocabulary: Vocabulary,
+        perception: Perception, reason: str,
+    ) -> PipelineResult:
+        """Без детектора режет ядровой change-point — второй по качеству метод, которому
+        не нужен GPU сверх признаков. Один шаг на весь ролик здесь не годится: это
+        выглядело бы как результат, а не как отказ. Причина уходит в предупреждения."""
+        from praxis.pipeline.similarity import SimilaritySegmenter
+
+        result = SimilaritySegmenter(mode="kernel").run(video_path, meta, vocabulary, perception)
+        result.models["segmenter"] = "tsm-kernel"
+        result.models["segmenter_status"] = f"детектор границ {reason}: нарезка ядровым change-point"
+        return result
 
     @staticmethod
     def _whole(meta: VideoMeta, vocabulary: Vocabulary) -> Step:

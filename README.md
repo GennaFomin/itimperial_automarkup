@@ -29,10 +29,14 @@ cd web && npm install && npm run build && cd ..
 ~/.venvs/praxis/bin/python -m uvicorn praxis.api:app --port 8000
 ```
 
-The two model services run on a GPU box and are reached over HTTP; see
-[docs/PIPELINE.md](docs/PIPELINE.md) for the exact commands. Without them the app still
-runs — the timeline degrades to weaker features and steps arrive unlabelled, and the run
-says so in `warnings` rather than pretending to have succeeded.
+Three model services run on a GPU box and are reached over HTTP: video features
+(TimeSformer, port 8102), the boundary detector (port 8104) and the naming model
+(Qwen3-VL-8B, port 8100); see [docs/PIPELINE.md](docs/PIPELINE.md) for the exact commands
+and `.env.example` for the tunnel. The default segmenter is the learned boundary detector
+— the choice and the evidence are in [docs/DECISION.md](docs/DECISION.md). Without the
+services the app still runs: boundaries fall back to kernel change-point, features to
+grey blocks, steps arrive unlabelled, and every such fallback is listed in `warnings`
+rather than hidden behind a successful status.
 
 ### One clip end to end
 

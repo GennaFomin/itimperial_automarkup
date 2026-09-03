@@ -243,6 +243,8 @@ def annotate_clip(
 
     # Всё, что просело в этом прогоне, собирается в одном месте и уезжает в происхождение.
     warnings = list(perception.degraded)
+    if result.models.get("segmenter_status"):
+        warnings.append(f"границы: {result.models['segmenter_status']}")
     if named.models.get("namer_status"):
         warnings.append(f"именование: {named.models['namer_status']}")
 
