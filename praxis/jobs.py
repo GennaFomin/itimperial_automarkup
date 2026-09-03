@@ -57,31 +57,18 @@ def _remote_embeddings(source: Path) -> np.ndarray | None:
     return raw.reshape(answer["count"], answer["dim"]).astype(np.float32)
 
 
-def _feature_model() -> str:
-    """Какая модель сейчас за адресом сервиса. Спрашиваем её саму, а не догадываемся."""
-    if _feature_model.cached is not None:
-        return _feature_model.cached
-    try:
-        with urllib.request.urlopen(
-            config.VIDEO_BASE_URL.rstrip("/") + "/health", timeout=5
-        ) as response:
-            _feature_model.cached = str(json.loads(response.read()).get("model", "?"))
-    except (urllib.error.URLError, OSError, TimeoutError, ValueError):
-        _feature_model.cached = "?"
-    return _feature_model.cached
-
-
-_feature_model.cached = None
-
-
 def _feature_cache_path(source: Path) -> Path:
     """Ключ кэша: сам файл плюс всё, что влияет на признаки.
 
     Имя модели входит в ключ обязательно: без него смена энкодера молча отдавала бы
     векторы предыдущего, и сравнение энкодеров сравнивало бы кэш сам с собой.
+
+    Имя берётся из настройки, а не из живого запроса к сервису. Спрашивать сервис
+    нельзя: когда он недоступен, ключ менялся бы, уже посчитанные признаки становились
+    недостижимы, и прогон без нужды падал на серые блоки.
     """
     stamp = f"{source.resolve()}|{source.stat().st_size}|{config.VIDEO_FPS}|"
-    stamp += f"{config.VIDEO_WINDOW}|{config.VIDEO_STRIDE}|{_feature_model()}"
+    stamp += f"{config.VIDEO_WINDOW}|{config.VIDEO_STRIDE}|{config.VIDEO_MODEL}"
     digest = hashlib.sha1(stamp.encode()).hexdigest()[:16]
     return config.WORK_DIR / "features" / f"{digest}.npz"
 
