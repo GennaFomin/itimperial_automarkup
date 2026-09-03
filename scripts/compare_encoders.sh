@@ -18,9 +18,11 @@ PYTHON=~/.venvs/praxis/bin/python
 
 for model in $MODELS; do
     echo "=== $model ==="
-    ssh -n dl5 "pgrep -f '[s]erve_video' | xargs -r kill" 2>/dev/null
+    timeout 40 ssh -n dl5 "pgrep -f '[s]erve_video' | xargs -r kill" 2>/dev/null
     sleep 3
-    ssh -n dl5 "cd ~/praxis && setsid nohup env CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=$GPU \
+    # timeout обязателен: ssh с фоновым запуском не отпускает канал и висит вечно,
+    # даже когда удалённый процесс уже отвязан через setsid и nohup.
+    timeout 30 ssh -n dl5 "cd ~/praxis && setsid nohup env CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=$GPU \
         HF_HOME=\$HOME/praxis/hf ~/praxis/venv/bin/python serve_video.py --port $PORT --model $model \
         > ~/praxis/logs/video-$model.log 2>&1 < /dev/null &" >/dev/null 2>&1
 
@@ -38,5 +40,5 @@ for model in $MODELS; do
 
     PRAXIS_VOCAB=data/pool_val/vocab_charades.yaml PRAXIS_NAMER=none PRAXIS_FEATURES=video \
     PRAXIS_VIDEO_BASE_URL="http://127.0.0.1:$PORT" PRAXIS_MIN_SEGMENT_SEC=1.5 PRAXIS_IDLE_RATIO=0.3 \
-    $PYTHON scripts/sweep.py --clips "$CLIPS" --gt "$GT" --methods "$METHOD" 2>/dev/null | tail -2
+    $PYTHON scripts/sweep.py --clips "$CLIPS" --gt "$GT" --methods "$METHOD" 2>&1 | tail -3
 done
