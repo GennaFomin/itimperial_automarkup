@@ -58,11 +58,21 @@ def row(steps: list[dict], duration: float, top: int, title: str) -> list[str]:
             parts.append(
                 f"drawbox=x={mark:.1f}:y={y}:w=2:h={BAR}:color=0xF2F5F9@0.9:t=fill"
             )
-        label = clean(f"{step['action']} {step.get('object') or ''}".strip())
-        if width > 70 and label:
+        # Подпись обрезается под ширину полосы, а не прячется: скрытая подпись выглядит
+        # как шаг без имени, и по картинке невозможно отличить короткий шаг от сбоя
+        # именования. На самую узкую полосу ставится номер шага.
+        raw = f"{step['action']} {step.get('object') or ''}".strip()
+        fit = int((width - 10) / 8)  # ~8 px на символ при кегле 15
+        if raw and fit >= 3:
+            text = raw if len(raw) <= fit else raw[: max(fit - 1, 1)] + "…"
             parts.append(
-                f"drawtext=fontfile={FONT}:text='{label}':x={start + 6:.1f}:y={y + 7}:"
+                f"drawtext=fontfile={FONT}:text='{clean(text)}':x={start + 5:.1f}:y={y + 7}:"
                 f"fontsize=15:fontcolor=white"
+            )
+        elif width >= 14:
+            parts.append(
+                f"drawtext=fontfile={FONT}:text='{index + 1}':x={start + 3:.1f}:y={y + 7}:"
+                f"fontsize=13:fontcolor=white"
             )
     return parts
 
