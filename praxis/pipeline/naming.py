@@ -241,6 +241,11 @@ class RemoteVlmNamer(HttpNamer):
             "objects": vocabulary.objects,
             "pairs": vocabulary.pairs,
             "frame_labels": config.VLM_FRAME_LABELS,
+            # Три флага ниже пропали при переписывании истории и без них сервис молча
+            # притягивал ответ к словарю Assembly101 на любом домене.
+            "open_vocabulary": config.OPEN_VOCABULARY,
+            "language": config.LANGUAGE,
+            "context_frames": config.CONTEXT_FRAMES > 0,
             "domain": config.DOMAIN or vocabulary.description or None,
         }
 

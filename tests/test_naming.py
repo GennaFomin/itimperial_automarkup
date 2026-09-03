@@ -136,3 +136,41 @@ def test_does_not_merge_without_real_labels():
     ]
     assert len(merge_adjacent(parts, labelled=False)) == 3
     assert len(merge_adjacent(parts, labelled=True)) == 1
+
+
+def test_namer_request_carries_every_mode_flag(monkeypatch, tmp_path):
+    """Флаги режима обязаны доезжать до сервиса: без open_vocabulary он молча притягивает
+    ответ к словарю, без context_frames подписи «до/после» не ставятся. Однажды эти
+    строки потерялись при переписывании истории, и целый день замеров ушёл впустую."""
+    from praxis import config
+    from praxis.pipeline import naming
+
+    sent: dict = {}
+
+    class Fake(naming.RemoteVlmNamer):
+        def _frames(self, *args, **kwargs):
+            return ["x"]
+
+        def _post(self, path, payload, base_url=None):
+            sent.update(payload)
+            return {"results": []}
+
+    monkeypatch.setattr(config, "OPEN_VOCABULARY", True)
+    monkeypatch.setattr(config, "LANGUAGE", "en")
+    monkeypatch.setattr(config, "CONTEXT_FRAMES", 0.6)
+    monkeypatch.setattr(config, "TRACK_BASE_URL", "")
+    monkeypatch.setattr(config, "VLM_CONTEXT", False)
+    monkeypatch.setattr(config, "VLM_TWO_STAGE", False)
+    monkeypatch.setattr(config, "VLM_RESCORE", 0)
+
+    from praxis.schema import Step, VideoMeta
+    from praxis.vocab import load_vocabulary
+
+    meta = VideoMeta(id="v", filename="v.mp4", duration_sec=10.0, fps=30.0, width=1280, height=720)
+    steps = [Step(id=0, start_sec=0.0, end_sec=5.0, action="attach", object=None,
+                  keyframe_sec=2.5, confidence=None)]
+    Fake("http://127.0.0.1:1").name_steps(tmp_path / "v.mp4", meta, steps, load_vocabulary(), None)
+
+    assert sent.get("open_vocabulary") is True
+    assert sent.get("language") == "en"
+    assert sent.get("context_frames") is True
