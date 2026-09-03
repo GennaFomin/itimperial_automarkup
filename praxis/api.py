@@ -6,13 +6,16 @@ import json
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, UploadFile
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request, UploadFile
+from fastapi.exception_handlers import http_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from praxis import config, jobs, media, store
+from praxis import api_v1, config, errors, jobs, media, store
+from praxis.errors import ContractError
 from praxis.schema import Annotation, diff_steps, to_contract_csv, to_contract_json, to_csv, to_json
 from praxis.vocab import check_annotation, load_vocabulary
 
@@ -241,6 +244,54 @@ async def get_runs(video_id: str) -> dict:
 @app.get("/api/stats")
 async def get_stats() -> dict:
     return store.review_stats()
+
+
+# Контрактный слой кейсодателя. Подключается до монтирования статики, иначе
+# StaticFiles на "/" перехватил бы его пути.
+app.include_router(api_v1.router)
+
+
+@app.exception_handler(ContractError)
+async def _contract_error(request: Request, exc: ContractError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content=exc.envelope())
+
+
+@app.exception_handler(HTTPException)
+async def _http_error(request: Request, exc: HTTPException):
+    """Ошибки контрактного слоя едут в конверте §2, остальные — как раньше.
+
+    Внутренний API отвечает {"detail": "..."} и на этом стоят его тесты и его
+    редактор. Внешнему потребителю нужен машиночитаемый код, поэтому форма
+    различается по пути, а не подменяется глобально.
+    """
+    if not api_v1.is_contract_path(request):
+        return await http_exception_handler(request, exc)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": {
+                "code": errors.JOB_NOT_FOUND if exc.status_code == 404 else errors.INTERNAL,
+                "message": str(exc.detail),
+                "details": {},
+            }
+        },
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+    if not api_v1.is_contract_path(request):
+        return JSONResponse(status_code=422, content={"detail": exc.errors()})
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": {
+                "code": errors.INVALID_REVIEW,
+                "message": "Тело запроса не соответствует контракту",
+                "details": {"violations": [str(item) for item in exc.errors()]},
+            }
+        },
+    )
 
 
 # Собранный фронт отдаётся тем же процессом — в докере это один контейнер, без nginx.

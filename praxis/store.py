@@ -39,7 +39,10 @@ CREATE TABLE IF NOT EXISTS videos (
     motion         TEXT,
     filmstrip      TEXT,
     alternatives   TEXT,
-    created_at     TEXT NOT NULL
+    created_at     TEXT NOT NULL,
+    started_at     TEXT,
+    finished_at    TEXT,
+    cancel_requested INTEGER DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS events (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -81,6 +84,12 @@ def init_db() -> None:
             "ALTER TABLE videos ADD COLUMN stage TEXT",
             "UPDATE videos SET prediction = annotation WHERE prediction IS NULL",
             "ALTER TABLE videos DROP COLUMN annotation",
+            # Контракт различает «когда поставили в очередь», «когда начали» и
+            # «когда закончили»; выводить два последних из created_at — подделка.
+            "ALTER TABLE videos ADD COLUMN started_at TEXT",
+            "ALTER TABLE videos ADD COLUMN finished_at TEXT",
+            # Кооперативная отмена: прогон сам смотрит на флаг между стадиями.
+            "ALTER TABLE videos ADD COLUMN cancel_requested INTEGER DEFAULT 0",
         ):
             try:
                 connection.execute(statement)

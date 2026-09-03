@@ -26,6 +26,11 @@ class Vocabulary(BaseModel):
     objects: list[str] = Field(default_factory=list)
     # Необязательный белый список: какие объекты допустимы для каждого действия.
     pairs: dict[str, list[str]] | None = None
+    # Необязательные подписи для интерфейса: «значение словаря → как показать человеку».
+    # Пусто по умолчанию, и тогда подписью служит само значение. Машинного перевода нет
+    # намеренно: при открытой лексике модель отвечает на языке PRAXIS_LANGUAGE, и её
+    # ответ уже является той строкой, которую человек должен увидеть.
+    labels: dict[str, str] = Field(default_factory=dict)
 
     def has_action(self, action: str) -> bool:
         return action in self.actions

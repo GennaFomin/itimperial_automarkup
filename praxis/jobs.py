@@ -7,19 +7,29 @@ import hashlib
 import json
 import tempfile
 import time
+import traceback
 import urllib.error
 import urllib.request
-import traceback
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
-from praxis import config, media, store
+from praxis import config, errors, media, store
+from praxis.errors import UploadRejected
 from praxis.pipeline.base import Perception, get_segmenter
 from praxis.pipeline.naming import get_namer, merge_adjacent
 from praxis.schema import Annotation, Provenance, VideoMeta
 from praxis.vocab import load_vocabulary
+
+
+class Cancelled(Exception):
+    """Задание отменено человеком. Отдельный тип: это не сбой прогона."""
+
+
+def _cancelled(record: dict) -> bool:
+    """Попросили ли отменить. Ключа может не быть на базе прежней версии."""
+    return bool(record.get("cancel_requested"))
 
 
 def _remote_embeddings(source: Path) -> np.ndarray | None:
@@ -279,14 +289,24 @@ def process_video(video_id: str) -> None:
     if record is None:
         return
 
-    store.update_video(video_id, status="processing", stage="decode", error=None)
+    store.update_video(
+        video_id, status="processing", stage="decode", error=None, started_at=store.now()
+    )
 
     def checkpoint(stage: str) -> None:
-        """Отметить стадию и проверить, не пора ли сдаваться по времени."""
+        """Отметить стадию, проверить время и не отменили ли задание.
+
+        Фоновую задачу нельзя убить извне, но она сама проходит через эту точку
+        между стадиями — этого достаточно, чтобы отмена была настоящей, а не
+        пометкой в интерфейсе. Начатая стадия при этом доигрывает до конца.
+        """
         if time.perf_counter() - started > config.JOB_TIMEOUT_SEC:
             raise TimeoutError(
                 f"прогон превысил {config.JOB_TIMEOUT_SEC:.0f} с на стадии «{stage}»"
             )
+        current = store.get_video(video_id)
+        if current is not None and _cancelled(current):
+            raise Cancelled(f"обработка отменена на стадии «{stage}»")
         store.update_video(video_id, stage=stage)
 
     try:
@@ -341,7 +361,18 @@ def process_video(video_id: str) -> None:
             motion=json.dumps(motion),
             filmstrip=json.dumps(strip),
             alternatives=json.dumps(result.alternatives),
+            finished_at=store.now(),
         )
+    except Cancelled as cancelled:
+        store.update_video(
+            video_id,
+            status="cancelled",
+            stage=None,
+            error=None,
+            processing_sec=round(time.perf_counter() - started, 3),
+            finished_at=store.now(),
+        )
+        store.log_event(video_id, "cancel", {"message": str(cancelled)})
     except Exception as error:  # noqa: BLE001 — статус задачи важнее типа ошибки
         message = f"{error}\n{traceback.format_exc(limit=3)}"
         store.update_video(
@@ -350,6 +381,7 @@ def process_video(video_id: str) -> None:
             stage="failed",
             error=message,
             processing_sec=round(time.perf_counter() - started, 3),
+            finished_at=store.now(),
         )
         store.log_event(
             video_id,
@@ -365,7 +397,12 @@ def prepare_upload(video_id: str, filename: str, raw: bytes) -> dict:
     """Сохраняет загруженный файл и проверяет требования кейса к ролику."""
     suffix = Path(filename).suffix.lower()
     if suffix not in config.ALLOWED_SUFFIXES:
-        raise ValueError(f"поддерживаются только {', '.join(sorted(config.ALLOWED_SUFFIXES))}")
+        raise UploadRejected(
+            errors.UNSUPPORTED_FORMAT,
+            f"поддерживаются только {', '.join(sorted(config.ALLOWED_SUFFIXES))}",
+            got=suffix,
+            allowed=sorted(config.ALLOWED_SUFFIXES),
+        )
 
     directory = store.video_dir(video_id)
     source = directory / "source.mp4"
@@ -373,11 +410,19 @@ def prepare_upload(video_id: str, filename: str, raw: bytes) -> dict:
 
     meta = media.probe(source)
     if meta["duration_sec"] > config.MAX_DURATION_SEC:
-        raise ValueError(
-            f"ролик длиннее {config.MAX_DURATION_SEC:.0f} с (получено {meta['duration_sec']:.1f} с)"
+        raise UploadRejected(
+            errors.VIDEO_TOO_LONG,
+            f"ролик длиннее {config.MAX_DURATION_SEC:.0f} с (получено {meta['duration_sec']:.1f} с)",
+            duration_ms=round(meta["duration_sec"] * 1000),
+            limit_ms=round(config.MAX_DURATION_SEC * 1000),
         )
     if meta["height"] < config.MIN_HEIGHT:
-        raise ValueError(f"нужно не меньше {config.MIN_HEIGHT}p (получено {meta['height']}p)")
+        raise UploadRejected(
+            errors.VIDEO_TOO_SMALL,
+            f"нужно не меньше {config.MIN_HEIGHT}p (получено {meta['height']}p)",
+            height=meta["height"],
+            min_height=config.MIN_HEIGHT,
+        )
     return meta
 
 
