@@ -55,6 +55,22 @@ CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=5 \
     python scripts/serve_tas.py --port 8104
 ```
 
+Перезапуск сервиса — **двумя разными ssh-вызовами**: остановка и старт. `pkill -f` в одной
+команде со стартом убивает саму удалённую оболочку, потому что её командная строка
+содержит имя скрипта; сервис гибнет молча, лог обрывается сразу после «готово».
+
+```bash
+ssh -n dl5 'pkill -f "serve_v[l]m"; until ! pgrep -f "serve_v[l]m" >/dev/null; do sleep 1; done'
+ssh -n dl5 'cd ~/praxis && setsid nohup env CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=2 \
+    HF_HOME=$HOME/praxis/hf PRAXIS_VLM_MAX_IMAGES=20 venv/bin/python serve_vlm.py --port 8100 \
+    --model Qwen/Qwen3-VL-8B-Instruct > logs/vlm.log 2>&1 < /dev/null & disown'
+curl http://127.0.0.1:8100/health     # ждать снаружи, через туннель
+```
+
+Лог читать `grep -a`: прогресс-бар загрузки делает файл «бинарным», и обычный `grep`
+прячет трейсбек. `PRAXIS_VLM_MAX_IMAGES` — потолок картинок на один проход именования;
+именно он, а не число сегментов, определяет память карты.
+
 `CUDA_DEVICE_ORDER=PCI_BUS_ID` обязателен: без него номер карты не совпадает с тем, что
 показывает `nvidia-smi`, и легко занять чужую.
 
