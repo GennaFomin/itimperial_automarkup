@@ -9,10 +9,12 @@
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
     "test:unit": "esbuild tests/segments.test.ts --bundle --platform=node --format=esm --outfile=.e2e-artifacts/segments.test.mjs --log-level=warning && node .e2e-artifacts/segments.test.mjs",
-    "e2e:video": "node e2e/make-fixture-video.mjs .e2e-artifacts/video",
-    "e2e": "node e2e/editor.mjs .e2e-artifacts/video/clip.webm .e2e-artifacts/shots",
-    "e2e:scenarios": "node e2e/scenarios.mjs .e2e-artifacts/video/clip.webm .e2e-artifacts/shots",
-    "test": "npm run typecheck && npm run test:unit"
+    "e2e:video": "node e2e/make-fixture-video.mjs .e2e-artifacts/video 25",
+    "e2e": "node e2e/editor.mjs .e2e-artifacts/video/clip.mp4 .e2e-artifacts/shots",
+    "e2e:scenarios": "node e2e/scenarios.mjs .e2e-artifacts/video/clip.mp4 .e2e-artifacts/shots",
+    "test": "npm run typecheck && npm run test:unit",
+    "dev:mock": "vite --mode mock",
+    "e2e:live": "node e2e/live.mjs .e2e-artifacts/video/clip.mp4 .e2e-artifacts/shots"
   },
   "dependencies": {
     "react": "^19.1.1",

@@ -19,6 +19,9 @@ export function buildReview(
     submitted_at: new Date().toISOString(),
     segments: toReviewSegments(segments),
     time_spent_ms: Math.max(0, Math.round(timeSpentMs)),
+    // Отметка проверки едет отдельным списком: в контракте её нет, а заказчику
+    // важно отличать просмотренное человеком от просто нетронутого.
+    verified_ids: segments.filter((s) => s.verified).map((s) => s.id),
   }
 }
 

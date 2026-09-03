@@ -1,16 +1,27 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ApiError, cancelJob, getPrediction, getVocab, pollJob, saveReview } from '../api/client'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import {
+  ApiError,
+  USING_MOCK,
+  cancelJob,
+  frameUrl,
+  getPrediction,
+  getVocab,
+  mediaUrl,
+  pollJob,
+  saveReview,
+} from '../api/client'
 import { JOB_STAGES, STAGE_LABEL, type Job, type Prediction, type VocabAction, type VocabObject } from '../api/types'
 import { Timeline } from '../components/Timeline'
 import { VideoStage, type VideoHandle } from '../components/VideoStage'
 import { KeyframePanel } from '../components/KeyframePanel'
 import { SegmentInspector } from '../components/SegmentInspector'
 import { buildExportCsv, buildExportJson, buildReview, download } from '../lib/export'
-import { coverage, diffAgainstPrediction, validate } from '../lib/segments'
+import { coverage, diffAgainstPrediction, validate, verifiedCount } from '../lib/segments'
 import { formatDuration } from '../lib/time'
+import { useActivityTimer } from '../lib/useActivityTimer'
 import { useEditorStore } from '../store/editorStore'
-import { getTaskVideoUrl, setTaskVideoUrl, useTasksStore } from '../store/tasksStore'
+import { useTasksStore } from '../store/tasksStore'
 import '../components/SidePanel.css'
 import './EditorScreen.css'
 
@@ -23,14 +34,17 @@ type Phase =
   | { kind: 'error'; message: string; code: string }
 
 export function EditorScreen() {
-  const { taskId = '' } = useParams()
+  const { taskId: jobId = '' } = useParams()
+  const [params] = useSearchParams()
   const navigate = useNavigate()
-  const task = useTasksStore((s) => s.tasks.find((t) => t.id === taskId))
-  const updateTask = useTasksStore((s) => s.updateTask)
+  // Экран не зависит от того, успел ли загрузиться список: название — лишь
+  // украшение, а всё остальное берётся у сервера по идентификатору задания.
+  const task = useTasksStore((s) => s.tasks.find((t) => t.job_id === jobId))
+  const refreshTasks = useTasksStore((s) => s.refresh)
 
+  const mode: 'review' | 'scratch' = params.get('mode') === 'scratch' ? 'scratch' : 'review'
   const [phase, setPhase] = useState<Phase>({ kind: 'waiting', job: null, slow: false })
   const [tab, setTab] = useState<'keyframes' | 'inspector'>('keyframes')
-  const [videoSrc, setVideoSrc] = useState<string | null>(() => getTaskVideoUrl(taskId))
   const [saving, setSaving] = useState(false)
   const [savedAt, setSavedAt] = useState<string | null>(null)
 
@@ -38,15 +52,14 @@ export function EditorScreen() {
   const load = useEditorStore((s) => s.load)
   const reset = useEditorStore((s) => s.reset)
 
-  useEffect(() => reset, [reset, taskId])
+  useEffect(() => reset, [reset, jobId])
 
   /* ---------- Ожидание авторазметки и загрузка прогноза ---------- */
   // Зависим только от идентификаторов: объект задачи пересоздаётся на каждом
   // обновлении прогресса, и зависимость от него перезапускала бы поллинг
   // бесконечно, так и не дойдя до готового прогноза.
-  const jobId = task?.job_id
   useEffect(() => {
-    if (!taskId || !jobId) return
+    if (!jobId) return
     const startedAt = Date.now()
     let cancelled = false
 
@@ -54,7 +67,6 @@ export function EditorScreen() {
       jobId,
       (job) => {
         if (cancelled) return
-        updateTask(taskId, { status: job.status, progress: job.progress })
 
         if (job.status === 'failed') {
           setPhase({
@@ -72,7 +84,7 @@ export function EditorScreen() {
           void Promise.all([getPrediction(jobId), getVocab()])
             .then(([prediction, vocabDoc]) => {
               if (cancelled) return
-              load(prediction, vocabDoc)
+              load(prediction, vocabDoc, mode)
               setPhase({ kind: 'ready', prediction })
             })
             .catch((e: unknown) => {
@@ -97,13 +109,23 @@ export function EditorScreen() {
       cancelled = true
       stop()
     }
-  }, [taskId, jobId, updateTask, load])
+  }, [jobId, load, mode])
 
-  /* ---------- Словарь задачи, дополненный незнакомыми значениями ---------- */
+  /* ---------- Словарь, дополненный значениями вне его ---------- */
+  // При открытой лексике модель отвечает своими словами, поэтому значения вне
+  // словаря — норма, а не сбой: контракт (§1) требует показать их как есть.
+  const vocab = useEditorStore((s) => s.vocab)
   const { actions, objects, unknownValues } = useMemo(
-    () => mergeVocab(task?.vocab.actions ?? [], task?.vocab.objects ?? [], phase.kind === 'ready' ? phase.prediction : null),
-    [task, phase],
+    () =>
+      mergeVocab(
+        vocab?.actions ?? [],
+        vocab?.objects ?? [],
+        phase.kind === 'ready' ? phase.prediction : null,
+      ),
+    [vocab, phase],
   )
+
+  const timer = useActivityTimer(phase.kind === 'ready' ? jobId : null, mode)
 
   const seek = useCallback((ms: number) => videoRef.current?.seek(ms), [])
 
@@ -198,35 +220,38 @@ export function EditorScreen() {
       actions={actions}
       objects={objects}
       unknownValues={unknownValues}
-      videoSrc={videoSrc}
+      // Против фикстур ролика нет: запрашивать медиа и кадры не у кого, и
+      // молчаливые 404 в консоли только маскировали бы настоящие ошибки.
+      videoSrc={USING_MOCK ? null : mediaUrl(jobId)}
+      frameUrl={USING_MOCK ? null : (ms) => frameUrl(jobId, ms)}
       videoRef={videoRef}
-      task={task}
+      title={task?.title ?? jobId}
+      mode={mode}
+      seconds={timer.seconds}
       tab={tab}
       setTab={setTab}
       saving={saving}
       savedAt={savedAt}
       onSeek={seek}
       onPickKeyframe={selectAndSeek}
-      onPickFile={(file) => {
-        const url = URL.createObjectURL(file)
-        setTaskVideoUrl(task.id, url)
-        setVideoSrc(url)
-      }}
+      onExitScratch={() => navigate(`/task/${jobId}`)}
       onSave={async () => {
         setSaving(true)
         try {
           const state = useEditorStore.getState()
-          const review = buildReview(
-            prediction,
-            state.segments,
-            'user_12',
-            Date.now() - state.openedAt,
-          )
-          const res = await saveReview(task.job_id, review)
+          const review = buildReview(prediction, state.segments, 'user_12', timer.seconds * 1000)
+          review.mode = mode
+          const res = await saveReview(jobId, review)
           setSavedAt(res.saved_at)
-          updateTask(task.id, { reviewed_at: res.saved_at })
+          // Замер времени уходит отдельным событием: сложить его с отправкой
+          // значило бы посчитать один интервал дважды.
+          timer.report()
+          void refreshTasks()
+          if (res.problems.length) {
+            console.warn('Замечания по словарю:', res.problems)
+          }
         } catch (e) {
-          alert(e instanceof Error ? e.message : 'Не удалось сохранить review')
+          alert(e instanceof Error ? e.message : 'Не удалось сохранить правку')
         } finally {
           setSaving(false)
         }
@@ -241,15 +266,19 @@ interface BodyProps {
   objects: VocabObject[]
   unknownValues: string[]
   videoSrc: string | null
+  frameUrl: ((ms: number) => string) | null
   videoRef: React.RefObject<VideoHandle | null>
-  task: { id: string; title: string; file_name: string | null }
+  title: string
+  mode: 'review' | 'scratch'
+  /** Активные секунды работы — то, из чего считается ускорение. */
+  seconds: number
   tab: 'keyframes' | 'inspector'
   setTab: (t: 'keyframes' | 'inspector') => void
   saving: boolean
   savedAt: string | null
   onSeek: (ms: number) => void
   onPickKeyframe: (segmentId: string, ms: number) => void
-  onPickFile: (file: File) => void
+  onExitScratch: () => void
   onSave: () => void
 }
 
@@ -259,15 +288,18 @@ function EditorBody({
   objects,
   unknownValues,
   videoSrc,
+  frameUrl,
   videoRef,
-  task,
+  title,
+  mode,
+  seconds,
   tab,
   setTab,
   saving,
   savedAt,
   onSeek,
   onPickKeyframe,
-  onPickFile,
+  onExitScratch,
   onSave,
 }: BodyProps) {
   const segments = useEditorStore((s) => s.segments)
@@ -285,12 +317,16 @@ function EditorBody({
   )
   const [exportOpen, setExportOpen] = useState(false)
 
+  const applyVerifyAll = useEditorStore((s) => s.applyVerifyAll)
+  const gotoNextUnverified = useEditorStore((s) => s.gotoNextUnverified)
+
   const edited = segments.filter((s) => s.edited).length
+  const checked = verifiedCount(segments)
   const missingKeyframes = segments.filter((s) => s.keyframe_ms === null).length
   const cov = Math.round(coverage(segments, durationMs) * 100)
 
   const doExport = (format: 'json' | 'csv', source: 'review' | 'prediction') => {
-    const base = task.title.replace(/[^\wа-яА-ЯёЁ-]+/g, '_').slice(0, 60) || 'export'
+    const base = title.replace(/[^\wа-яА-ЯёЁ-]+/g, '_').slice(0, 60) || 'export'
     if (format === 'json') {
       download(
         `${base}_${source}.json`,
@@ -300,7 +336,7 @@ function EditorBody({
     } else {
       download(
         `${base}_${source}.csv`,
-        buildExportCsv(prediction, segments, source, task.id),
+        buildExportCsv(prediction, segments, source, prediction.job_id),
         'text/csv',
       )
     }
@@ -314,7 +350,7 @@ function EditorBody({
           ← Задачи
         </Link>
         <div className="ed__titles">
-          <div className="ed__title">{task.title}</div>
+          <div className="ed__title">{title}</div>
           <div className="ed__sub">
             {prediction.model_version} · vocab {prediction.vocab_version} ·{' '}
             {formatDuration(prediction.video.duration_ms)}
@@ -334,6 +370,19 @@ function EditorBody({
             <span className="ed__stat-val">{cov}%</span>
             <span className="ed__stat-key">покрытие</span>
           </div>
+          <div className="ed__stat">
+            <span
+              className="ed__stat-val"
+              style={{ color: checked === segments.length && segments.length ? 'var(--ok)' : undefined }}
+            >
+              {checked}/{segments.length}
+            </span>
+            <span className="ed__stat-key">проверено</span>
+          </div>
+          <div className="ed__stat" title="Только активное время: паузы не считаются">
+            <span className="ed__stat-val">{formatClock(seconds)}</span>
+            <span className="ed__stat-key">{mode === 'scratch' ? 'с нуля' : 'проверка'}</span>
+          </div>
           {issues.length > 0 && (
             <div className="ed__stat">
               <span className="ed__stat-val" style={{ color: 'var(--danger)' }}>
@@ -350,6 +399,23 @@ function EditorBody({
           </button>
           <button className="btn btn--sm" onClick={redo} disabled={!canRedo} title="Ctrl+Shift+Z">
             ↷
+          </button>
+
+          <button
+            className="btn btn--sm"
+            onClick={() => gotoNextUnverified()}
+            disabled={checked === segments.length}
+            title="Следующий непроверенный (Shift+Tab)"
+          >
+            ⇥ Непроверенный
+          </button>
+          <button
+            className="btn btn--sm"
+            onClick={applyVerifyAll}
+            disabled={checked === segments.length}
+            title="Подтвердить все оставшиеся"
+          >
+            ✓ Все
           </button>
 
           <div style={{ position: 'relative' }}>
@@ -403,12 +469,27 @@ function EditorBody({
             disabled={saving || issues.length > 0}
             title={issues.length > 0 ? 'Сначала исправьте проблемы разметки' : 'Ctrl+S'}
           >
-            {saving ? 'Сохраняем…' : savedAt ? 'Сохранено ✓' : 'Отправить review'}
+            {saving
+              ? 'Сохраняем…'
+              : savedAt
+                ? 'Сохранено ✓'
+                : mode === 'scratch'
+                  ? 'Завершить замер'
+                  : 'Отправить правку'}
           </button>
         </div>
       </header>
 
-      {prediction.errors.length > 0 && (
+      {mode === 'scratch' && (
+        <div className="banner banner--scratch">
+          ⏱ Замер ручной разметки: прогноз скрыт, идёт отсчёт времени. Результат не
+          заменит настоящую правку — он нужен только для сравнения скорости.
+          <button className="btn btn--sm" style={{ marginLeft: 'auto' }} onClick={onExitScratch}>
+            Выйти к разметке
+          </button>
+        </div>
+      )}
+      {mode !== 'scratch' && prediction.errors.length > 0 && (
         <div className="banner banner--warn">
           ⚠ {prediction.errors.map((e) => e.message).join('; ')}
           {missingKeyframes > 0 && ` — ${missingKeyframes} сегментов без ключевого кадра`}
@@ -416,7 +497,8 @@ function EditorBody({
       )}
       {unknownValues.length > 0 && (
         <div className="banner banner--warn">
-          ⚠ Значения вне словаря задачи: {unknownValues.join(', ')}. Показаны как есть.
+          ⚠ Значения вне словаря: {unknownValues.join(', ')}. Показаны как есть — при
+          открытой лексике модель отвечает своими словами.
         </div>
       )}
       {issues.length > 0 && (
@@ -431,11 +513,9 @@ function EditorBody({
           <VideoStage
             ref={videoRef}
             src={videoSrc}
-            fileName={task.file_name}
             fps={prediction.video.fps}
             actions={actions}
             objects={objects}
-            onPickFile={onPickFile}
           />
           <Timeline actions={actions} objects={objects} onSeek={onSeek} />
         </div>
@@ -459,7 +539,7 @@ function EditorBody({
 
           <div className="panel__body">
             {tab === 'keyframes' ? (
-              <KeyframePanel videoSrc={videoSrc} actions={actions} onPick={onPickKeyframe} />
+              <KeyframePanel frameUrl={frameUrl} actions={actions} onPick={onPickKeyframe} />
             ) : (
               <SegmentInspector actions={actions} objects={objects} onSeek={onSeek} />
             )}
@@ -478,6 +558,12 @@ function EditorBody({
       </div>
     </div>
   )
+}
+
+/** Активное время в виде м:сс — оно же уходит в метрику ускорения. */
+function formatClock(seconds: number): string {
+  const total = Math.round(seconds)
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
 }
 
 /**
@@ -565,10 +651,15 @@ function useKeyboardShortcuts(
           e.preventDefault()
           const sorted = store.segments
           if (!sorted.length) return
+          // Shift+Tab ведёт по непроверенным: это основной маршрут просмотра,
+          // и он важнее обхода назад, который делает то же, что стрелки.
+          if (e.shiftKey) {
+            const next = store.gotoNextUnverified()
+            if (next) seek(next.keyframe_ms ?? next.start_ms)
+            return
+          }
           const i = sorted.findIndex((s) => s.id === store.selectedId)
-          const next = e.shiftKey
-            ? sorted[(i <= 0 ? sorted.length : i) - 1]
-            : sorted[(i + 1) % sorted.length]
+          const next = sorted[(i + 1) % sorted.length]
           store.select(next.id)
           store.zoomToSegment(next.id)
           seek(next.keyframe_ms ?? next.start_ms)
@@ -614,6 +705,15 @@ function useKeyboardShortcuts(
       if (key === 'v') {
         e.preventDefault()
         store.setTool('select')
+        return
+      }
+      // «v» уже занята инструментом выбора, поэтому отметка проверки — на «y».
+      if (key === 'y' && store.selectedId) {
+        e.preventDefault()
+        const current = store.segments.find((x) => x.id === store.selectedId)
+        store.applyVerify(store.selectedId, !current?.verified)
+        const next = store.gotoNextUnverified()
+        if (next) seek(next.keyframe_ms ?? next.start_ms)
         return
       }
       if (key === 'f' && store.selectedId) {

@@ -66,14 +66,16 @@ export interface VideoMeta {
 
 export interface FieldValue {
   value: string
-  confidence: number
+  /** null — пайплайн такой величины не измеряет; см. capabilities у прогноза. */
+  confidence: number | null
 }
 
 export interface PredictionSegment {
   id: string
   start_ms: number
   end_ms: number
-  boundary_confidence: number
+  /** null: разрез — это выброс в статистике, а не вероятность. */
+  boundary_confidence: number | null
   action: FieldValue
   object: FieldValue
   /** null допустим: стадия keyframe могла упасть — сегмент есть, кадр не выбран. */
@@ -98,11 +100,28 @@ export interface Prediction {
   video: VideoMeta
   segments: PredictionSegment[]
   stats: {
-    latency_ms: number
-    cost_usd: number
-    frames_decoded: number
+    latency_ms: number | null
+    /** Секунды моделей, ставка за час и сумма по ней. Валюта задаётся ставкой. */
+    cost: Record<string, number>
+    stages_ms: Record<string, number>
   }
   errors: PredictionError[]
+  /**
+   * Что пайплайн умеет на самом деле. Половина уверенностей приходит null —
+   * без этого блока это читалось бы как недоделка, а не как свойство пайплайна.
+   */
+  capabilities: Capabilities
+}
+
+export interface Capabilities {
+  boundary_confidence: boolean
+  object_confidence: boolean
+  keyframe_confidence: boolean
+  /** "pair" — число оценивает связку «действие+объект», а не глагол отдельно. */
+  action_confidence: 'pair' | boolean
+  /** "midpoint" — ключевой кадр взят серединой отрезка, а не выбран моделью. */
+  keyframe_source: 'midpoint' | 'selected'
+  open_vocabulary: boolean
 }
 
 export type SegmentOrigin = 'model' | 'human'
@@ -124,6 +143,43 @@ export interface Review {
   submitted_at: string
   segments: ReviewSegment[]
   time_spent_ms: number
+  /** Какие сегменты человек подтвердил глазами. Расширение контракта. */
+  verified_ids?: string[]
+  /** scratch — замер разметки с нуля, он не заменяет настоящую правку. */
+  mode?: 'review' | 'scratch'
+}
+
+export interface ReviewResult {
+  review_id: string
+  saved_at: string
+  problems: string[]
+  /** Временный идентификатор клиента → присвоенный сервером. */
+  id_map: Record<string, string>
+}
+
+/** Строка списка задач: сервер отдаёт всё нужное карточке одним запросом. */
+export interface JobSummary extends Job {
+  filename: string
+  duration_ms: number
+  warnings: string[]
+  reviewed: boolean
+}
+
+/** Требования к ролику приходят с сервера, чтобы не дублировать их числами в UI. */
+export interface Limits {
+  max_duration_ms: number
+  min_height: number
+  allowed_extensions: string[]
+  job_timeout_ms: number
+}
+
+export interface Stats {
+  videos: number
+  median_sec: number
+  total_sec: number
+  scratch: { videos: number; median_sec: number; total_sec: number }
+  /** Во сколько раз правка быстрее разметки с нуля. Цель кейса — 3. */
+  speedup?: number
 }
 
 export interface VocabAction {
@@ -141,6 +197,11 @@ export interface Vocabulary {
   version: string
   actions: VocabAction[]
   objects: VocabObject[]
+  name?: string
+  /** Список — подсказка, а не ограничение: модель отвечает своими словами. */
+  open?: boolean
+  /** Какие объекты допустимы для действия. Есть не у всех словарей. */
+  pairs?: Record<string, string[]> | null
 }
 
 export interface CreateJobOptions {

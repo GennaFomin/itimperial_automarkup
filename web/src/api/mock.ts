@@ -10,8 +10,12 @@ import vocabFixture from '../fixtures/vocab.json'
 import type {
   Job,
   JobStage,
+  JobSummary,
+  Limits,
   Prediction,
   Review,
+  ReviewResult,
+  Stats,
   Vocabulary,
   CreateJobOptions,
 } from './types'
@@ -178,10 +182,52 @@ export async function getPrediction(jobId: string): Promise<Prediction> {
   return rescale(base, job.job_id, job.durationMs)
 }
 
-export async function saveReview(jobId: string, review: Review): Promise<{ review_id: string; saved_at: string }> {
+export async function saveReview(jobId: string, review: Review): Promise<ReviewResult> {
   await sleep(220)
   reviews.set(jobId, review)
-  return { review_id: newId('r'), saved_at: new Date().toISOString() }
+  return {
+    review_id: newId('r'),
+    saved_at: new Date().toISOString(),
+    problems: [],
+    id_map: {},
+  }
+}
+
+/** Список задач — то же, что отдаёт настоящий `GET /api/v1/jobs`. */
+export async function listJobs(): Promise<JobSummary[]> {
+  await sleep(80)
+  const out: JobSummary[] = []
+  for (const job of jobs.values()) {
+    const state = await getJob(job.job_id)
+    out.push({
+      ...state,
+      filename: `mock-${job.scenario}.mp4`,
+      duration_ms: job.durationMs ?? 0,
+      warnings: state.status === 'done_with_errors' ? ['мок: прогон деградировал'] : [],
+      reviewed: reviews.has(job.job_id),
+    })
+  }
+  return out.reverse()
+}
+
+export async function getLimits(): Promise<Limits> {
+  await sleep(40)
+  return {
+    max_duration_ms: 30_000,
+    min_height: 720,
+    allowed_extensions: ['.mov', '.mp4'],
+    job_timeout_ms: 300_000,
+  }
+}
+
+export async function getStats(): Promise<Stats> {
+  await sleep(40)
+  return {
+    videos: reviews.size,
+    median_sec: 0,
+    total_sec: 0,
+    scratch: { videos: 0, median_sec: 0, total_sec: 0 },
+  }
 }
 
 export async function getVocab(): Promise<Vocabulary> {
@@ -206,11 +252,11 @@ export async function cancelJob(jobId: string): Promise<void> {
 function rescale(base: Prediction, jobId: string, durationMs: number | null): Prediction {
   const src = base.video.duration_ms
   if (!durationMs || durationMs <= 0 || Math.abs(durationMs - src) < 500) {
-    return { ...base, job_id: jobId }
+    return withCapabilities({ ...base, job_id: jobId })
   }
   const k = durationMs / src
   const at = (ms: number) => Math.max(0, Math.min(durationMs, Math.round(ms * k)))
-  return {
+  return withCapabilities({
     ...base,
     job_id: jobId,
     video: { ...base.video, duration_ms: durationMs },
@@ -220,6 +266,21 @@ function rescale(base: Prediction, jobId: string, durationMs: number | null): Pr
       end_ms: at(s.end_ms),
       keyframe_ms: s.keyframe_ms === null ? null : at(s.keyframe_ms),
     })),
+  })
+}
+
+/** Фикстуры сняты до появления блока возможностей — дополняем их тем же, что и бэкенд. */
+function withCapabilities(prediction: Prediction): Prediction {
+  return {
+    ...prediction,
+    capabilities: {
+      boundary_confidence: true,
+      object_confidence: true,
+      keyframe_confidence: true,
+      action_confidence: true,
+      keyframe_source: 'selected',
+      open_vocabulary: false,
+    },
   }
 }
 

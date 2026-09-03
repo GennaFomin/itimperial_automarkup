@@ -28,6 +28,15 @@ export interface EditableSegment {
   object_confidence: number | null
   /** Правил ли человек этот сегмент — подсвечиваем в UI и считаем в дифф. */
   edited: boolean
+  /**
+   * Человек посмотрел на сегмент и подтвердил его. Отличается от `edited`:
+   * правка означает, что сегмент меняли, проверка — что на него смотрели.
+   *
+   * Любая правка ставит отметку заодно: чтобы тронуть сегмент, его пришлось
+   * увидеть. Обратное неверно — подтвердить можно и не меняя ничего, и именно
+   * это отличает просмотренную разметку от просто принятой на веру.
+   */
+  verified: boolean
 }
 
 /** Короче этого сегмент не делаем: ниже уже неразличимо на таймлайне. */
@@ -46,6 +55,7 @@ export function fromPrediction(segments: PredictionSegment[]): EditableSegment[]
     action_confidence: s.action.confidence,
     object_confidence: s.object.confidence,
     edited: false,
+    verified: false,
   }))
 }
 
@@ -106,6 +116,7 @@ export function splitSegment(
     end_ms: at,
     keyframe_ms: keepKeyframe(seg.keyframe_ms, seg.start_ms, at),
     edited: true,
+    verified: true,
   }
   const right: EditableSegment = {
     ...seg,
@@ -114,6 +125,7 @@ export function splitSegment(
     start_ms: at,
     keyframe_ms: midpoint(at, seg.end_ms),
     edited: true,
+    verified: true,
   }
   const next = [...segments]
   next.splice(i, 1, left, right)
@@ -154,6 +166,7 @@ export function carveOut(
           end_ms: start,
           keyframe_ms: keepKeyframe(seg.keyframe_ms, seg.start_ms, start),
           edited: true,
+          verified: true,
         })
       }
       if (seg.end_ms - end >= MIN_SEGMENT_MS) {
@@ -164,6 +177,7 @@ export function carveOut(
           start_ms: end,
           keyframe_ms: midpoint(end, seg.end_ms),
           edited: true,
+          verified: true,
         })
       }
       continue
@@ -175,6 +189,7 @@ export function carveOut(
         end_ms: start,
         keyframe_ms: keepKeyframe(seg.keyframe_ms, seg.start_ms, start),
         edited: true,
+        verified: true,
       })
       continue
     }
@@ -185,6 +200,7 @@ export function carveOut(
         start_ms: end,
         keyframe_ms: keepKeyframe(seg.keyframe_ms, end, seg.end_ms),
         edited: true,
+        verified: true,
       })
       continue
     }
@@ -203,6 +219,7 @@ export function carveOut(
     action_confidence: null,
     object_confidence: null,
     edited: true,
+    verified: true,
   }
   out.push(carved)
   return { segments: sortSegments(out), newId: carved.id }
@@ -242,6 +259,7 @@ export function moveBoundary(
     end_ms: end,
     keyframe_ms: keepKeyframe(seg.keyframe_ms, start, end),
     edited: true,
+    verified: true,
   }
   const out = [...sorted]
   out[i] = updated
@@ -273,6 +291,7 @@ export function moveSegment(
     end_ms: start + len,
     keyframe_ms: seg.keyframe_ms === null ? null : seg.keyframe_ms + shift,
     edited: true,
+    verified: true,
   }
   return out
 }
@@ -288,6 +307,45 @@ export function updateSegment(
     merged.keyframe_ms = keepKeyframe(merged.keyframe_ms, merged.start_ms, merged.end_ms)
     return merged
   })
+}
+
+/**
+ * Отметить сегмент проверенным, ничего в нём не меняя.
+ *
+ * Отдельная операция, а не часть updateSegment: подтверждение — это утверждение
+ * о работе человека, а не о содержании разметки, и в дифф правок оно не идёт.
+ */
+export function setVerified(
+  segments: EditableSegment[],
+  segmentId: string,
+  value: boolean,
+): EditableSegment[] {
+  return segments.map((s) => (s.id === segmentId ? { ...s, verified: value } : s))
+}
+
+/** Подтвердить всё непроверенное разом — когда просмотр уже сделан глазами. */
+export function verifyAll(segments: EditableSegment[]): EditableSegment[] {
+  if (segments.every((s) => s.verified)) return segments
+  return segments.map((s) => (s.verified ? s : { ...s, verified: true }))
+}
+
+export function verifiedCount(segments: EditableSegment[]): number {
+  return segments.reduce((count, s) => count + (s.verified ? 1 : 0), 0)
+}
+
+/** Следующий непроверенный по кругу — основной маршрут обхода разметки. */
+export function nextUnverified(
+  segments: EditableSegment[],
+  afterId: string | null,
+): EditableSegment | null {
+  const sorted = sortSegments(segments)
+  if (!sorted.length) return null
+  const from = afterId ? sorted.findIndex((s) => s.id === afterId) + 1 : 0
+  for (let i = 0; i < sorted.length; i++) {
+    const candidate = sorted[(from + i) % sorted.length]
+    if (!candidate.verified) return candidate
+  }
+  return null
 }
 
 export function deleteSegment(segments: EditableSegment[], segmentId: string): EditableSegment[] {
@@ -324,6 +382,7 @@ export function createSegment(
     action_confidence: null,
     object_confidence: null,
     edited: true,
+    verified: true,
   }
   return { segments: sortSegments([...segments, created]), newId: created.id }
 }
@@ -340,6 +399,7 @@ export function mergeWithNext(segments: EditableSegment[], segmentId: string): E
     end_ms: b.end_ms,
     keyframe_ms: a.keyframe_ms ?? b.keyframe_ms,
     edited: true,
+    verified: true,
   }
   const out = [...sorted]
   out.splice(i, 2, merged)

@@ -26,6 +26,7 @@ export function SegmentInspector({ actions, objects, onSeek }: Props) {
   const applyBoundary = useEditorStore((s) => s.applyBoundary)
   const applyDelete = useEditorStore((s) => s.applyDelete)
   const applyMerge = useEditorStore((s) => s.applyMerge)
+  const applyVerify = useEditorStore((s) => s.applyVerify)
   const applySplit = useEditorStore((s) => s.applySplit)
   const zoomToSegment = useEditorStore((s) => s.zoomToSegment)
 
@@ -55,6 +56,18 @@ export function SegmentInspector({ actions, objects, onSeek }: Props) {
         </div>
         <span className="chip">{seg.origin === 'human' ? 'вручную' : 'модель'}</span>
       </div>
+
+      {/* Проверка — утверждение о работе человека, а не о содержании разметки,
+          поэтому это отдельное действие, а не следствие правки. */}
+      <label className={`insp__verify${seg.verified ? ' insp__verify--on' : ''}`}>
+        <input
+          type="checkbox"
+          checked={seg.verified}
+          onChange={(e) => applyVerify(seg.id, e.target.checked)}
+        />
+        <span>{seg.verified ? 'Проверено' : 'Отметить проверенным'}</span>
+        <kbd>Y</kbd>
+      </label>
 
       {seg.keyframe_ms === null && (
         <span className="insp__flag">⚠ Ключевой кадр не посчитан моделью</span>

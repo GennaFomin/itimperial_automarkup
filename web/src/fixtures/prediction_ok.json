@@ -719,8 +719,24 @@
   ],
   "stats": {
     "latency_ms": 84000,
-    "cost_usd": 0.12,
-    "frames_decoded": 5520
+    "cost": {
+      "model_sec": 84.0,
+      "gpu_hour_rate": 60.0,
+      "amount": 0.12
+    },
+    "stages_ms": {
+      "decode": 1200,
+      "segment": 400,
+      "recognize": 82400
+    }
   },
-  "errors": []
+  "errors": [],
+  "capabilities": {
+    "boundary_confidence": true,
+    "object_confidence": true,
+    "keyframe_confidence": true,
+    "action_confidence": true,
+    "keyframe_source": "selected",
+    "open_vocabulary": false
+  }
 }

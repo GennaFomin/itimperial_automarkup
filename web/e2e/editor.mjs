@@ -49,11 +49,15 @@ if (segCount === 0) errors.push('НЕТ СЕГМЕНТОВ НА ТАЙМЛАЙН
 step('Экран разметки')
 await shot('05-editor')
 
-step('Ключевые кадры извлекаются')
-await page.waitForFunction(() => document.querySelectorAll('.kf__thumb img').length >= 3, { timeout: 30000 })
-  .catch(() => errors.push('КАДРЫ НЕ ИЗВЛЕКЛИСЬ'))
-const thumbs = await page.locator('.kf__thumb img').count()
-console.log('  превью кадров готово:', thumbs)
+step('Панель ключевых кадров')
+// Против фикстур ролика нет, поэтому и превью взяться неоткуда: панель обязана
+// показать это словами, а не пустыми рамками. Настоящие кадры с сервера
+// проверяет отдельный прогон e2e/live.mjs.
+const cards = await page.locator('.kf').count()
+const placeholders = await page.locator('.kf__placeholder').count()
+console.log(`  карточек кадров: ${cards}, заглушек: ${placeholders}`)
+if (!cards) errors.push('ПАНЕЛЬ КАДРОВ ПУСТА')
+if (placeholders !== cards) errors.push('ОТСУТСТВИЕ ВИДЕО НЕ ОБЪЯСНЕНО')
 await shot('06-keyframes')
 
 step('Клик по ключевому кадру открывает инспектор')
@@ -108,7 +112,22 @@ await shot('10-carved')
 
 step('Разрез клавишей S')
 await page.keyboard.press('v')
-await page.locator('.seg').nth(3).click()
+// Режем самый широкий сегмент: на узком обе половины не дотянут до минимальной
+// длины, и операция законно ничего не сделает.
+await page.evaluate(() => {
+  const best = [...document.querySelectorAll('.seg')]
+    .map((el) => ({ el, w: el.getBoundingClientRect().width }))
+    .sort((a, b) => b.w - a.w)[0]
+  best.el.scrollIntoView()
+})
+const widest = await page.evaluate(() => {
+  const best = [...document.querySelectorAll('.seg')]
+    .map((el) => ({ el, w: el.getBoundingClientRect().width }))
+    .sort((a, b) => b.w - a.w)[0]
+  const r = best.el.getBoundingClientRect()
+  return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+})
+await page.mouse.click(widest.x, widest.y)
 await page.waitForTimeout(200)
 const cntPreSplit = await page.locator('.seg').count()
 await page.keyboard.press('s')
@@ -155,8 +174,8 @@ console.log('  CSV строк:', lines.length, '| BOM:', hasBom ? 'есть' : '
 console.log('  заголовок:', lines[0])
 console.log('  пример:   ', lines[1])
 
-step('Отправка review')
-await page.click('button:has-text("Отправить review")')
+step('Отправка правки')
+await page.click('button:has-text("Отправить правку")')
 await page.waitForSelector('button:has-text("Сохранено")', { timeout: 10000 })
   .catch(() => errors.push('REVIEW НЕ СОХРАНИЛСЯ'))
 await shot('12-saved')

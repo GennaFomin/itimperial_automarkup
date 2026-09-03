@@ -16,29 +16,27 @@ export interface VideoHandle {
 }
 
 interface Props {
+  /**
+   * Видео отдаёт бэкенд, поэтому источник переживает перезагрузку вкладки.
+   * null — работа против фикстур, где ролика нет вовсе: таймлайн, правки и
+   * экспорт при этом полностью рабочие, а плеер честно говорит, что показывать
+   * нечего, вместо битой картинки.
+   */
   src: string | null
-  fileName: string | null
   fps: number
   actions: VocabAction[]
   objects: VocabObject[]
-  /** Пользователь выбрал файл заново — после перезагрузки blob-URL теряется. */
-  onPickFile: (file: File) => void
 }
 
 /**
  * Плеер и транспорт. Единственный владелец времени воспроизведения: playhead в
  * сторе — зеркало текущей позиции, а не независимое состояние.
- *
- * Когда файла нет (вкладку перезагрузили — blob-URL умер), плеер честно
- * сообщает об этом и продолжает работать как «виртуальные часы»: таймлайн,
- * правки и экспорт остаются полностью рабочими.
  */
 export const VideoStage = forwardRef<VideoHandle, Props>(function VideoStage(
-  { src, fileName, fps, actions, objects, onPickFile },
+  { src, fps, actions, objects },
   ref,
 ) {
   const videoRef = useRef<HTMLVideoElement>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const durationMs = useEditorStore((s) => s.durationMs)
   const playheadMs = useEditorStore((s) => s.playheadMs)
   const setPlayhead = useEditorStore((s) => s.setPlayhead)
@@ -46,9 +44,6 @@ export const VideoStage = forwardRef<VideoHandle, Props>(function VideoStage(
 
   const [playing, setPlaying] = useState(false)
   const [speed, setSpeed] = useState(1)
-  /** Виртуальные часы, когда видео нет: id кадра анимации. */
-  const clockRef = useRef<number | null>(null)
-  const clockStateRef = useRef({ lastTs: 0 })
 
   useImperativeHandle(ref, () => ({
     seek: (ms) => {
@@ -111,34 +106,6 @@ export const VideoStage = forwardRef<VideoHandle, Props>(function VideoStage(
     }
   }, [src, setPlayhead])
 
-  // Виртуальные часы, если файла нет.
-  useEffect(() => {
-    if (src || !playing) {
-      if (clockRef.current) cancelAnimationFrame(clockRef.current)
-      clockRef.current = null
-      return
-    }
-    clockStateRef.current.lastTs = performance.now()
-    const tick = (ts: number) => {
-      const dt = ts - clockStateRef.current.lastTs
-      clockStateRef.current.lastTs = ts
-      const state = useEditorStore.getState()
-      const next = state.playheadMs + dt * speed
-      if (next >= durationMs) {
-        state.setPlayhead(durationMs)
-        setPlaying(false)
-        return
-      }
-      state.setPlayhead(next)
-      clockRef.current = requestAnimationFrame(tick)
-    }
-    clockRef.current = requestAnimationFrame(tick)
-    return () => {
-      if (clockRef.current) cancelAnimationFrame(clockRef.current)
-      clockRef.current = null
-    }
-  }, [src, playing, speed, durationMs])
-
   useEffect(() => {
     const v = videoRef.current
     if (v) v.playbackRate = speed
@@ -163,26 +130,12 @@ export const VideoStage = forwardRef<VideoHandle, Props>(function VideoStage(
         ) : (
           <div className="stage__missing">
             <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-muted)' }}>
-              Видео недоступно в этой вкладке
+              Работа на фикстурах
             </div>
             <p>
-              Файл {fileName ? <b>{fileName}</b> : 'ролика'} остался на вашем компьютере: браузер не
-              хранит его между перезагрузками. Разметка, таймлайн и экспорт работают и без него —
-              выберите файл заново, чтобы видеть кадры.
+              Видео отдаёт бэкенд, а сейчас его нет. Разметка, таймлайн и экспорт работают
+              как обычно — не хватает только картинки.
             </p>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="video/*"
-              className="visually-hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0]
-                if (f) onPickFile(f)
-              }}
-            />
-            <button className="btn" onClick={() => fileInputRef.current?.click()}>
-              Выбрать файл
-            </button>
           </div>
         )}
 

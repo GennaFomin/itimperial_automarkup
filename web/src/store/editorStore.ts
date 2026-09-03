@@ -16,8 +16,11 @@ import {
   mergeWithNext,
   moveBoundary,
   moveSegment,
+  nextUnverified,
+  setVerified,
   splitSegment,
   updateSegment,
+  verifyAll,
 } from '../lib/segments'
 import { clamp } from '../lib/time'
 
@@ -46,10 +49,14 @@ interface EditorState {
   rangeSelection: [number, number] | null
   snapEnabled: boolean
 
-  /** Время, потраченное на review — уходит в контракт как time_spent_ms. */
-  openedAt: number
+  /**
+   * Замер разметки с нуля: прогноз спрятан, дорожка пуста, время идёт в
+   * отдельный счётчик. Это знаменатель KPI «в три раза быстрее» — без него
+   * отношение не с чем сравнивать.
+   */
+  mode: 'review' | 'scratch'
 
-  load: (prediction: Prediction, vocab: Vocabulary) => void
+  load: (prediction: Prediction, vocab: Vocabulary, mode?: 'review' | 'scratch') => void
   reset: () => void
 
   select: (id: string | null) => void
@@ -75,6 +82,10 @@ interface EditorState {
   ) => void
   applyDelete: (segmentId: string) => void
   applyMerge: (segmentId: string) => void
+  applyVerify: (segmentId: string, value: boolean) => void
+  applyVerifyAll: () => void
+  /** Перейти к следующему непроверенному сегменту; null — все проверены. */
+  gotoNextUnverified: () => EditableSegment | null
 
   undo: () => void
   redo: () => void
@@ -97,7 +108,7 @@ const initial = {
   tool: 'select' as TimelineTool,
   rangeSelection: null,
   snapEnabled: true,
-  openedAt: Date.now(),
+  mode: 'review' as 'review' | 'scratch',
 }
 
 export const useEditorStore = create<EditorState>((set, get) => {
@@ -116,17 +127,19 @@ export const useEditorStore = create<EditorState>((set, get) => {
   return {
     ...initial,
 
-    load: (prediction, vocab) => {
+    load: (prediction, vocab, mode = 'review') => {
       const duration = prediction.video.duration_ms
       set({
         ...initial,
         prediction,
         vocab,
-        segments: fromPrediction(prediction.segments),
+        // В режиме замера прогноз остаётся в сторе как база сравнения, но на
+        // дорожку не попадает: человек размечает ролик с чистого листа.
+        segments: mode === 'scratch' ? [] : fromPrediction(prediction.segments),
         durationMs: duration,
         viewStartMs: 0,
         viewEndMs: duration,
-        openedAt: Date.now(),
+        mode,
       })
     },
 
@@ -226,6 +239,20 @@ export const useEditorStore = create<EditorState>((set, get) => {
     },
 
     applyMerge: (segmentId) => commit(mergeWithNext(get().segments, segmentId)),
+
+    applyVerify: (segmentId, value) => commit(setVerified(get().segments, segmentId, value)),
+
+    applyVerifyAll: () => commit(verifyAll(get().segments)),
+
+    gotoNextUnverified: () => {
+      const { segments, selectedId } = get()
+      const next = nextUnverified(segments, selectedId)
+      if (next) {
+        set({ selectedId: next.id })
+        get().zoomToSegment(next.id)
+      }
+      return next
+    },
 
     undo: () =>
       set((s) => {

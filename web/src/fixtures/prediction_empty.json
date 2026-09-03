@@ -14,8 +14,24 @@
   "segments": [],
   "stats": {
     "latency_ms": 21000,
-    "cost_usd": 0.03,
-    "frames_decoded": 1260
+    "cost": {
+      "model_sec": 21.0,
+      "gpu_hour_rate": 60.0,
+      "amount": 0.03
+    },
+    "stages_ms": {
+      "decode": 1200,
+      "segment": 400,
+      "recognize": 19400
+    }
   },
-  "errors": []
+  "errors": [],
+  "capabilities": {
+    "boundary_confidence": true,
+    "object_confidence": true,
+    "keyframe_confidence": true,
+    "action_confidence": true,
+    "keyframe_source": "selected",
+    "open_vocabulary": false
+  }
 }

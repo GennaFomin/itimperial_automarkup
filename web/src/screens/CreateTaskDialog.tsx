@@ -1,53 +1,41 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { createJob, getVocab } from '../api/client'
-import type { MockScenario } from '../api/mock'
-import type { VocabAction, VocabObject, Vocabulary } from '../api/types'
-import {
-  loadSavedVocabs,
-  saveVocab,
-  setTaskVideoUrl,
-  useTasksStore,
-  type SavedVocab,
-  type TaskVocabulary,
-} from '../store/tasksStore'
+import { useEffect, useRef, useState } from 'react'
+import { USING_MOCK, createJob, getLimits, getVocab } from '../api/client'
+import type { Limits, Vocabulary } from '../api/types'
 import { formatDuration } from '../lib/time'
+import { useTasksStore } from '../store/tasksStore'
 import './CreateTaskDialog.css'
-
-/** Палитра для классов, которых нет в словаре бэкенда. */
-const PALETTE = ['#FF5A1F', '#3DDCC8', '#7C6BFF', '#F2C14E', '#4A9DFF', '#E85D9B', '#35C07D', '#FF8A47']
-
-type VocabMode = 'default' | 'saved' | 'new'
 
 interface Picked {
   file: File
   url: string
   durationMs: number | null
+  height: number | null
   posterUrl: string | null
 }
 
-export function CreateTaskDialog({ onClose }: { onClose: () => void }) {
-  const addTask = useTasksStore((s) => s.addTask)
+interface Props {
+  onClose: () => void
+  onCreated: () => void
+}
 
-  const [baseVocab, setBaseVocab] = useState<Vocabulary | null>(null)
+export function CreateTaskDialog({ onClose, onCreated }: Props) {
+  const setTitle = useTasksStore((s) => s.setTitle)
+
+  const [limits, setLimits] = useState<Limits | null>(null)
+  const [vocab, setVocab] = useState<Vocabulary | null>(null)
   const [picked, setPicked] = useState<Picked | null>(null)
-  const [title, setTitle] = useState('')
+  const [title, setTitleValue] = useState('')
   const [dragOver, setDragOver] = useState(false)
-  const [mode, setMode] = useState<VocabMode>('default')
-  const [savedVocabs] = useState<SavedVocab[]>(() => loadSavedVocabs())
-  const [savedIndex, setSavedIndex] = useState(0)
-  const [newName, setNewName] = useState('')
-  const [newActions, setNewActions] = useState('Взять\nПереместить\nПоложить')
-  const [newObjects, setNewObjects] = useState('Деталь\nЛоток\nИнструмент')
-  const [scenario, setScenario] = useState<MockScenario>('ok')
+  const [scenario, setScenario] = useState('ok')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const inputRef = useRef<HTMLInputElement>(null)
-  // Ревокаем blob-URL-ы только при отмене: у созданной задачи URL забирает стор.
   const handedOff = useRef(false)
 
   useEffect(() => {
-    getVocab().then(setBaseVocab).catch(() => setBaseVocab(null))
+    void getLimits().then(setLimits).catch(() => setLimits(null))
+    void getVocab().then(setVocab).catch(() => setVocab(null))
   }, [])
 
   useEffect(() => {
@@ -66,37 +54,44 @@ export function CreateTaskDialog({ onClose }: { onClose: () => void }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  const vocab: TaskVocabulary = useMemo(() => {
-    if (mode === 'saved' && savedVocabs[savedIndex]) return savedVocabs[savedIndex]
-    if (mode === 'new') {
-      return {
-        name: newName.trim() || 'Без названия',
-        actions: parseActions(newActions),
-        objects: parseObjects(newObjects),
-      }
+  const extensions = limits?.allowed_extensions ?? ['.mp4', '.mov']
+
+  /**
+   * Проверка до отправки — это удобство, а не контроль: решает всё равно сервер.
+   * Поэтому непрочитанные браузером метаданные не блокируют загрузку, а вот
+   * заведомо неподходящий ролик лучше отклонить сразу, чем ждать ответа.
+   */
+  function reject(file: File, probe: { durationMs: number | null; height: number | null }): string | null {
+    const suffix = file.name.slice(file.name.lastIndexOf('.')).toLowerCase()
+    if (!extensions.includes(suffix)) {
+      return `Поддерживаются только ${extensions.join(' и ')} — этот файл ${suffix || 'без расширения'}.`
     }
-    return {
-      name: baseVocab ? `Общий v${baseVocab.version}` : 'Общий',
-      actions: baseVocab?.actions ?? [],
-      objects: baseVocab?.objects ?? [],
+    if (limits && probe.durationMs !== null && probe.durationMs > limits.max_duration_ms) {
+      return `Ролик длиннее ${Math.round(limits.max_duration_ms / 1000)} с (в файле ${formatDuration(probe.durationMs)}).`
     }
-  }, [mode, savedVocabs, savedIndex, newName, newActions, newObjects, baseVocab])
+    if (limits && probe.height !== null && probe.height < limits.min_height) {
+      return `Нужно не меньше ${limits.min_height}p, а здесь ${probe.height}p.`
+    }
+    return null
+  }
 
   async function handleFile(file: File) {
     setError(null)
-    if (!file.type.startsWith('video/')) {
-      setError('Нужен видеофайл. Поддерживаются форматы, которые умеет браузер: mp4, webm, mov.')
+    const probe = await probeVideo(URL.createObjectURL(file)).catch(() => null)
+    const url = URL.createObjectURL(file)
+    const info = {
+      durationMs: probe?.durationMs ?? null,
+      height: probe?.height ?? null,
+    }
+    const problem = reject(file, info)
+    if (problem) {
+      URL.revokeObjectURL(url)
+      setError(problem)
+      setPicked(null)
       return
     }
-    const url = URL.createObjectURL(file)
-    const probe = await probeVideo(url).catch(() => null)
-    setPicked({
-      file,
-      url,
-      durationMs: probe?.durationMs ?? null,
-      posterUrl: probe?.posterUrl ?? null,
-    })
-    if (!title.trim()) setTitle(file.name.replace(/\.[^.]+$/, ''))
+    setPicked({ file, url, ...info, posterUrl: probe?.posterUrl ?? null })
+    if (!title.trim()) setTitleValue(file.name.replace(/\.[^.]+$/, ''))
   }
 
   async function submit() {
@@ -104,38 +99,17 @@ export function CreateTaskDialog({ onClose }: { onClose: () => void }) {
       setError('Загрузите видео.')
       return
     }
-    if (vocab.actions.length === 0) {
-      setError('В словаре нет ни одного действия.')
-      return
-    }
     setBusy(true)
     setError(null)
     try {
       const { job_id } = await createJob({
         file: picked.file,
-        options: { vocab_version: baseVocab?.version ?? '1.0' },
         scenario,
         durationMs: picked.durationMs,
       })
-      const taskId = `t_${job_id}`
-      setTaskVideoUrl(taskId, picked.url)
       handedOff.current = true
-      if (mode === 'new' && newName.trim()) {
-        saveVocab({ ...vocab, name: newName.trim() })
-      }
-      addTask({
-        id: taskId,
-        job_id,
-        title: title.trim() || picked.file.name,
-        duration_ms: picked.durationMs,
-        created_at: new Date().toISOString(),
-        status: 'queued',
-        progress: 0,
-        vocab,
-        file_name: picked.file.name,
-        scenario,
-        reviewed_at: null,
-      })
+      if (title.trim()) setTitle(job_id, title.trim())
+      onCreated()
       onClose()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось создать задачу')
@@ -164,7 +138,7 @@ export function CreateTaskDialog({ onClose }: { onClose: () => void }) {
             <input
               ref={inputRef}
               type="file"
-              accept="video/*"
+              accept={`${extensions.join(',')},video/mp4,video/quicktime`}
               className="visually-hidden"
               onChange={(e) => {
                 const f = e.target.files?.[0]
@@ -198,7 +172,8 @@ export function CreateTaskDialog({ onClose }: { onClose: () => void }) {
                       {picked.file.name}
                     </div>
                     <div className="drop__hint mono">
-                      {picked.durationMs ? formatDuration(picked.durationMs) : 'длина неизвестна'} ·{' '}
+                      {picked.durationMs ? formatDuration(picked.durationMs) : 'длина неизвестна'}
+                      {picked.height ? ` · ${picked.height}p` : ''} ·{' '}
                       {(picked.file.size / 1024 / 1024).toFixed(1)} МБ
                     </div>
                   </div>
@@ -206,7 +181,7 @@ export function CreateTaskDialog({ onClose }: { onClose: () => void }) {
               ) : (
                 <>
                   <div className="drop__title">Перетащите видео или нажмите, чтобы выбрать</div>
-                  <div className="drop__hint">mp4, webm, mov — то, что играет браузер</div>
+                  <div className="drop__hint">{describeLimits(limits)}</div>
                 </>
               )}
             </div>
@@ -218,127 +193,73 @@ export function CreateTaskDialog({ onClose }: { onClose: () => void }) {
               className="input"
               value={title}
               placeholder="Например: Сборка узла, камера 2"
-              onChange={(e) => setTitle(e.target.value)}
+              onChange={(e) => setTitleValue(e.target.value)}
             />
+            <span className="field__hint">
+              Только для вашего удобства: сервер знает ролик по имени файла.
+            </span>
           </label>
 
           <div className="field">
             <span className="field__label">Словарь действий</span>
-            <div className="seg-toggle">
-              <button
-                className={`seg-toggle__btn${mode === 'default' ? ' seg-toggle__btn--active' : ''}`}
-                onClick={() => setMode('default')}
-              >
-                Общий
-              </button>
-              <button
-                className={`seg-toggle__btn${mode === 'saved' ? ' seg-toggle__btn--active' : ''}`}
-                onClick={() => setMode('saved')}
-                disabled={savedVocabs.length === 0}
-              >
-                Сохранённый {savedVocabs.length > 0 && `(${savedVocabs.length})`}
-              </button>
-              <button
-                className={`seg-toggle__btn${mode === 'new' ? ' seg-toggle__btn--active' : ''}`}
-                onClick={() => setMode('new')}
-              >
-                Новый
-              </button>
-            </div>
-
-            {mode === 'saved' && savedVocabs.length > 0 && (
-              <select
-                className="select"
-                value={savedIndex}
-                onChange={(e) => setSavedIndex(Number(e.target.value))}
-              >
-                {savedVocabs.map((v, i) => (
-                  <option key={v.name} value={i}>
-                    {v.name} — {v.actions.length} действий
-                  </option>
-                ))}
-              </select>
-            )}
-
-            {mode === 'new' && (
+            {vocab ? (
               <>
-                <input
-                  className="input"
-                  value={newName}
-                  placeholder="Название словаря"
-                  onChange={(e) => setNewName(e.target.value)}
-                />
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                  <label className="field">
-                    <span className="field__label">Действия — по одному в строке</span>
-                    <textarea
-                      className="textarea"
-                      value={newActions}
-                      onChange={(e) => setNewActions(e.target.value)}
-                    />
-                  </label>
-                  <label className="field">
-                    <span className="field__label">Объекты — по одному в строке</span>
-                    <textarea
-                      className="textarea"
-                      value={newObjects}
-                      onChange={(e) => setNewObjects(e.target.value)}
-                    />
-                  </label>
+                <div className="vocab-preview">
+                  {vocab.actions.slice(0, 12).map((a) => (
+                    <span className="chip" key={a.id}>
+                      <span className="chip__dot" style={{ background: a.color }} />
+                      {a.label_ru}
+                    </span>
+                  ))}
+                  {vocab.actions.length > 12 && (
+                    <span className="chip" style={{ color: 'var(--text-dim)' }}>
+                      +{vocab.actions.length - 12}
+                    </span>
+                  )}
                 </div>
                 <span className="field__hint">
-                  Можно задать id явно: <span className="mono">pick — Взять</span>. Иначе id
-                  сгенерируется из названия. «Неизвестно» добавляется автоматически.
+                  Таксономию задаёт сервер (PRAXIS_VOCAB).{' '}
+                  {vocab.open === true
+                    ? 'Словарь открытый: модель отвечает своими словами, список — подсказка, а не ограничение.'
+                    : 'Список закрытый: значения вне него будут помечены.'}
                 </span>
               </>
-            )}
-
-            {mode !== 'new' && (
-              <div className="vocab-preview">
-                {vocab.actions.map((a) => (
-                  <span className="chip" key={a.id}>
-                    <span className="chip__dot" style={{ background: a.color }} />
-                    {a.label_ru}
-                  </span>
-                ))}
-                {vocab.actions.length === 0 && (
-                  <span className="field__hint">Словарь не загрузился.</span>
-                )}
-              </div>
+            ) : (
+              <span className="field__hint">Словарь не загрузился.</span>
             )}
           </div>
 
-          <label className="field">
-            <span className="field__label">Сценарий мока</span>
-            <select
-              className="select"
-              value={scenario}
-              onChange={(e) => setScenario(e.target.value as MockScenario)}
-            >
-              <option value="ok">Обычный прогноз</option>
-              <option value="with_errors">done_with_errors — часть keyframe не посчитана</option>
-              <option value="empty">Пустой результат — ни одного сегмента</option>
-              <option value="failed">Джоба падает</option>
-              <option value="slow">Долгая обработка — дольше 10 минут</option>
-            </select>
-            <span className="field__hint">
-              Пока бэкенд не подключён — так проверяются обязательные сценарии из контракта.
-            </span>
-          </label>
+          {USING_MOCK && (
+            <label className="field">
+              <span className="field__label">Сценарий мока</span>
+              <select
+                className="select"
+                value={scenario}
+                onChange={(e) => setScenario(e.target.value)}
+              >
+                <option value="ok">Обычный прогноз</option>
+                <option value="with_errors">done_with_errors — часть keyframe не посчитана</option>
+                <option value="empty">Пустой результат — ни одного сегмента</option>
+                <option value="failed">Джоба падает</option>
+                <option value="slow">Долгая обработка — дольше 10 минут</option>
+              </select>
+              <span className="field__hint">
+                Обязательные сценарии контракта §8: живой бэкенд их по требованию не воспроизводит.
+              </span>
+            </label>
+          )}
 
           {error && <div className="alert">{error}</div>}
         </div>
 
         <div className="modal__foot">
-          <span className="field__hint">
-            {vocab.actions.length} действий · {vocab.objects.length} объектов
-          </span>
+          <span className="field__hint">{describeLimits(limits)}</span>
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="btn" onClick={onClose} disabled={busy}>
               Отмена
             </button>
             <button className="btn btn--primary" onClick={submit} disabled={busy || !picked}>
-              {busy ? 'Создаём…' : 'В очередь на разметку'}
+              {busy ? 'Загружаем…' : 'В очередь на разметку'}
             </button>
           </div>
         </div>
@@ -347,19 +268,31 @@ export function CreateTaskDialog({ onClose }: { onClose: () => void }) {
   )
 }
 
-/** Достаём длительность и кадр-обложку, не показывая пользователю служебный плеер. */
-function probeVideo(url: string): Promise<{ durationMs: number | null; posterUrl: string | null }> {
+/** Требования печатаются из ответа сервера, чтобы не разойтись с ним числами. */
+function describeLimits(limits: Limits | null): string {
+  if (!limits) return 'Требования к ролику загружаются…'
+  return [
+    limits.allowed_extensions.join(' или '),
+    `не длиннее ${Math.round(limits.max_duration_ms / 1000)} с`,
+    `не ниже ${limits.min_height}p`,
+  ].join(' · ')
+}
+
+/** Длительность, высота и кадр-обложка — без показа служебного плеера. */
+function probeVideo(
+  url: string,
+): Promise<{ durationMs: number | null; height: number | null; posterUrl: string | null }> {
   return new Promise((resolve, reject) => {
     const video = document.createElement('video')
     video.preload = 'metadata'
     video.muted = true
     video.src = url
 
-    const fail = () => reject(new Error('Не удалось прочитать метаданные видео'))
-    video.onerror = fail
+    video.onerror = () => reject(new Error('Не удалось прочитать метаданные видео'))
 
     video.onloadedmetadata = () => {
       const durationMs = Number.isFinite(video.duration) ? Math.round(video.duration * 1000) : null
+      const height = video.videoHeight || null
       // Кадр на 10% длины: первый кадр часто чёрный.
       video.currentTime = Math.min(video.duration * 0.1, 3)
       video.onseeked = () => {
@@ -368,70 +301,20 @@ function probeVideo(url: string): Promise<{ durationMs: number | null; posterUrl
           canvas.width = 320
           canvas.height = Math.round((320 * video.videoHeight) / (video.videoWidth || 1)) || 180
           const ctx = canvas.getContext('2d')
-          if (!ctx) return resolve({ durationMs, posterUrl: null })
+          if (!ctx) return resolve({ durationMs, height, posterUrl: null })
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
           canvas.toBlob(
             (blob) =>
-              resolve({ durationMs, posterUrl: blob ? URL.createObjectURL(blob) : null }),
+              resolve({ durationMs, height, posterUrl: blob ? URL.createObjectURL(blob) : null }),
             'image/jpeg',
             0.7,
           )
         } catch {
-          resolve({ durationMs, posterUrl: null })
+          resolve({ durationMs, height, posterUrl: null })
         }
       }
-      // Если seek не случится (кодек без произвольного доступа) — отдаём хотя бы длину.
-      setTimeout(() => resolve({ durationMs, posterUrl: null }), 2500)
+      // Если seek не случится (кодек без произвольного доступа) — отдаём хотя бы метаданные.
+      setTimeout(() => resolve({ durationMs, height, posterUrl: null }), 2500)
     }
   })
-}
-
-const slug = (s: string, i: number) => {
-  const ascii = s
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-  return ascii || `class_${i + 1}`
-}
-
-/** Строка вида `pick — Взять` или просто `Взять`. */
-function parseLine(line: string): { id: string | null; label: string } | null {
-  const trimmed = line.trim()
-  if (!trimmed) return null
-  const m = trimmed.match(/^([a-zA-Z0-9_-]+)\s*[—–-]\s*(.+)$/)
-  if (m) return { id: m[1], label: m[2].trim() }
-  return { id: null, label: trimmed }
-}
-
-function parseActions(text: string): VocabAction[] {
-  const out: VocabAction[] = []
-  const seen = new Set<string>()
-  text.split('\n').forEach((line, i) => {
-    const parsed = parseLine(line)
-    if (!parsed) return
-    const id = parsed.id ?? slug(parsed.label, i)
-    if (seen.has(id)) return
-    seen.add(id)
-    out.push({ id, label_ru: parsed.label, color: PALETTE[out.length % PALETTE.length] })
-  })
-  // unknown обязателен: модель возвращает его вместо уверенной выдумки.
-  if (!seen.has('unknown')) {
-    out.push({ id: 'unknown', label_ru: 'Неизвестно', color: '#9AA3AD' })
-  }
-  return out
-}
-
-function parseObjects(text: string): VocabObject[] {
-  const out: VocabObject[] = []
-  const seen = new Set<string>()
-  text.split('\n').forEach((line, i) => {
-    const parsed = parseLine(line)
-    if (!parsed) return
-    const id = parsed.id ?? slug(parsed.label, i)
-    if (seen.has(id)) return
-    seen.add(id)
-    out.push({ id, label_ru: parsed.label })
-  })
-  if (!seen.has('unknown')) out.push({ id: 'unknown', label_ru: 'Неизвестно' })
-  return out
 }

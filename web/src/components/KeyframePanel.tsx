@@ -1,11 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { FrameExtractor } from '../lib/frames'
+import { useEffect, useRef } from 'react'
 import { useEditorStore } from '../store/editorStore'
 import { formatShort } from '../lib/time'
 import type { VocabAction } from '../api/types'
 
 interface Props {
-  videoSrc: string | null
+  /**
+   * Адрес кадра по времени. Кадры приходят с сервера, где уже лежит их дисковый
+   * кэш: браузеру остаётся обычная картинка, а вкладке не нужен второй декодер
+   * видео и очередь перемоток ради каждой миниатюры.
+   */
+  frameUrl: ((ms: number) => string) | null
   actions: VocabAction[]
   onPick: (segmentId: string, keyframeMs: number) => void
 }
@@ -15,48 +19,10 @@ interface Props {
  * плеере и на таймлайне: это основной способ быстро пробежать разметку
  * глазами, не проматывая ролик.
  */
-export function KeyframePanel({ videoSrc, actions, onPick }: Props) {
+export function KeyframePanel({ frameUrl, actions, onPick }: Props) {
   const segments = useEditorStore((s) => s.segments)
   const selectedId = useEditorStore((s) => s.selectedId)
-  const [frames, setFrames] = useState<Record<string, string>>({})
-  const extractorRef = useRef<FrameExtractor | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!videoSrc) {
-      setFrames({})
-      return
-    }
-    const ex = new FrameExtractor(videoSrc, (key, url) =>
-      setFrames((prev) => ({ ...prev, [key]: url })),
-    )
-    extractorRef.current = ex
-    return () => {
-      ex.dispose()
-      extractorRef.current = null
-      setFrames({})
-    }
-  }, [videoSrc])
-
-  // Ключ кадра включает время: сдвинули keyframe — картинка пересчитается.
-  const items = useMemo(
-    () =>
-      segments.map((s) => ({
-        seg: s,
-        key: s.keyframe_ms === null ? null : `${s.id}@${s.keyframe_ms}`,
-      })),
-    [segments],
-  )
-
-  useEffect(() => {
-    const ex = extractorRef.current
-    if (!ex) return
-    for (const item of items) {
-      if (item.key && item.seg.keyframe_ms !== null) {
-        ex.request({ key: item.key, timeMs: item.seg.keyframe_ms })
-      }
-    }
-  }, [items])
 
   // Выделенный сегмент подтягиваем в зону видимости панели.
   useEffect(() => {
@@ -79,9 +45,11 @@ export function KeyframePanel({ videoSrc, actions, onPick }: Props) {
 
   return (
     <div className="kf-grid" ref={containerRef}>
-      {items.map(({ seg, key }) => {
+      {segments.map((seg) => {
         const action = actions.find((a) => a.id === seg.action)
-        const url = key ? frames[key] : undefined
+        // Адрес включает время кадра, поэтому сдвиг keyframe сам обновляет
+        // картинку и попадает в кэш браузера как отдельный ресурс.
+        const url = frameUrl && seg.keyframe_ms !== null ? frameUrl(seg.keyframe_ms) : undefined
         return (
           <button
             key={seg.id}
@@ -94,8 +62,6 @@ export function KeyframePanel({ videoSrc, actions, onPick }: Props) {
                 <img src={url} alt="" loading="lazy" />
               ) : seg.keyframe_ms === null ? (
                 <span className="kf__placeholder">кадр не выбран</span>
-              ) : videoSrc ? (
-                <span className="kf__spinner" />
               ) : (
                 <span className="kf__placeholder">нет видео</span>
               )}
@@ -103,7 +69,10 @@ export function KeyframePanel({ videoSrc, actions, onPick }: Props) {
               <span className="kf__stripe" style={{ background: action?.color ?? '#9AA3AD' }} />
             </div>
             <div className="kf__meta">
-              <span className="kf__action">{action?.label_ru ?? seg.action}</span>
+              <span className="kf__action">
+                {seg.verified && <span className="kf__check">✓</span>}
+                {action?.label_ru ?? seg.action}
+              </span>
               <span className="kf__time">
                 {seg.keyframe_ms === null
                   ? `${formatShort(seg.start_ms)}–${formatShort(seg.end_ms)}`

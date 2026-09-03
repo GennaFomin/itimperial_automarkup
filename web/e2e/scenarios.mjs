@@ -97,16 +97,30 @@ console.log('  полоса прогресса:', hasProgress ? 'есть' : 'Н
 if (!hasProgress) errors.push('НЕТ ПРОГРЕССА У ДОЛГОЙ ЗАДАЧИ')
 await page.screenshot({ path: `${SHOTS}/s5-list-final.png` })
 
-console.log('\n▶ Перезагрузка страницы — задачи переживают, видео просит перевыбрать')
-await page.reload()
-await page.waitForSelector('.tasks__title')
-console.log('  карточек после перезагрузки:', await page.locator('.card').count())
+console.log('\n▶ Работа без видео: разметка остаётся полностью рабочей')
+// Фикстуры не содержат ролика, поэтому плеер обязан честно сказать об этом,
+// а не показывать битую картинку. Всё остальное должно работать как обычно.
 await open('Обычный прогноз')
 const missing = await page.locator('.stage__missing').count()
-console.log('  плеер сообщает о потерянном файле:', missing > 0 ? 'да' : 'нет')
-console.log('  таймлайн жив:', await page.locator('.seg').count(), 'сегментов')
-if (await page.locator('.seg').count() === 0) errors.push('ПОСЛЕ ПЕРЕЗАГРУЗКИ ТАЙМЛАЙН ПУСТ')
-await page.screenshot({ path: `${SHOTS}/s6-reload.png` })
+console.log('  плеер объясняет отсутствие видео:', missing > 0 ? 'да' : 'НЕТ')
+if (!missing) errors.push('ПЛЕЕР МОЛЧА ПОКАЗЫВАЕТ ПУСТОТУ')
+const segCount = await page.locator('.seg').count()
+console.log('  таймлайн жив:', segCount, 'сегментов')
+if (!segCount) errors.push('ТАЙМЛАЙН ПУСТ БЕЗ ВИДЕО')
+// Правка без видео тоже должна проходить целиком.
+await page.locator('.seg').nth(1).click()
+await page.click('.panel__tab:has-text("Сегмент")')
+await page.waitForSelector('.insp')
+// Считаем по счётчику в шапке, а не по инспектору: клавиша отмечает сегмент и
+// сразу переводит к следующему непроверенному, поэтому в инспекторе окажется
+// уже другой сегмент — как и задумано.
+const checkedBefore = await page.locator('.ed__stat-val').nth(3).textContent()
+await page.keyboard.press('y')
+await page.waitForTimeout(300)
+const checkedAfter = await page.locator('.ed__stat-val').nth(3).textContent()
+console.log(`  отметка проверки без видео: ${checkedBefore} → ${checkedAfter}`)
+if (checkedBefore === checkedAfter) errors.push('ОТМЕТКА ПРОВЕРКИ НЕ РАБОТАЕТ')
+await page.screenshot({ path: `${SHOTS}/s6-no-video.png` })
 
 await browser.close()
 console.log('\n' + (errors.length ? '❌ ПРОБЛЕМЫ:\n' + errors.map(e => '  - ' + e).join('\n') : '✅ Все сценарии прошли'))
