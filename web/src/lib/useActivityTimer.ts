@@ -35,6 +35,10 @@ export function useActivityTimer(jobId: string | null, mode: 'review' | 'scratch
     )
 
     const interval = window.setInterval(() => {
+      // Пока задача не готова, работать не над чем: без этой проверки ожидание
+      // авторазметки копилось бы в счётчике и целиком уходило на сервер первым
+      // же отчётом, завышая ровно ту метрику, ради которой замер и делается.
+      if (!jobId) return
       const active = !document.hidden && Date.now() - lastActivity.current < IDLE_MS
       if (active) setSeconds((value) => value + TICK_MS / 1000)
     }, TICK_MS)
@@ -43,7 +47,7 @@ export function useActivityTimer(jobId: string | null, mode: 'review' | 'scratch
       ACTIVITY_EVENTS.forEach((event) => window.removeEventListener(event, touch))
       window.clearInterval(interval)
     }
-  }, [])
+  }, [jobId])
 
   /** Отправляем дельту, а не сумму: сервер складывает события сам. */
   const report = useCallback(() => {

@@ -31,16 +31,17 @@ export function CreateTaskDialog({ onClose, onCreated }: Props) {
   const [error, setError] = useState<string | null>(null)
 
   const inputRef = useRef<HTMLInputElement>(null)
-  const handedOff = useRef(false)
 
   useEffect(() => {
     void getLimits().then(setLimits).catch(() => setLimits(null))
     void getVocab().then(setVocab).catch(() => setVocab(null))
   }, [])
 
+  // Видео отдаёт бэкенд, поэтому локальная копия нужна только пока открыт
+  // диалог: держать её после отправки не за чем.
   useEffect(() => {
     return () => {
-      if (handedOff.current || !picked) return
+      if (!picked) return
       URL.revokeObjectURL(picked.url)
       if (picked.posterUrl) URL.revokeObjectURL(picked.posterUrl)
     }
@@ -62,7 +63,8 @@ export function CreateTaskDialog({ onClose, onCreated }: Props) {
    * заведомо неподходящий ролик лучше отклонить сразу, чем ждать ответа.
    */
   function reject(file: File, probe: { durationMs: number | null; height: number | null }): string | null {
-    const suffix = file.name.slice(file.name.lastIndexOf('.')).toLowerCase()
+    const dot = file.name.lastIndexOf('.')
+    const suffix = dot >= 0 ? file.name.slice(dot).toLowerCase() : ''
     if (!extensions.includes(suffix)) {
       return `Поддерживаются только ${extensions.join(' и ')} — этот файл ${suffix || 'без расширения'}.`
     }
@@ -77,8 +79,10 @@ export function CreateTaskDialog({ onClose, onCreated }: Props) {
 
   async function handleFile(file: File) {
     setError(null)
-    const probe = await probeVideo(URL.createObjectURL(file)).catch(() => null)
+    // Один blob-URL на файл: раньше их создавалось два — для чтения метаданных
+    // и «про запас», — и оба удерживали копию ролика до конца жизни вкладки.
     const url = URL.createObjectURL(file)
+    const probe = await probeVideo(url).catch(() => null)
     const info = {
       durationMs: probe?.durationMs ?? null,
       height: probe?.height ?? null,
@@ -86,6 +90,7 @@ export function CreateTaskDialog({ onClose, onCreated }: Props) {
     const problem = reject(file, info)
     if (problem) {
       URL.revokeObjectURL(url)
+      if (probe?.posterUrl) URL.revokeObjectURL(probe.posterUrl)
       setError(problem)
       setPicked(null)
       return
@@ -107,7 +112,6 @@ export function CreateTaskDialog({ onClose, onCreated }: Props) {
         scenario,
         durationMs: picked.durationMs,
       })
-      handedOff.current = true
       if (title.trim()) setTitle(job_id, title.trim())
       onCreated()
       onClose()

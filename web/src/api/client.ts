@@ -118,9 +118,21 @@ export async function getJob(jobId: string): Promise<Job> {
   return request(`${V1}/jobs/${jobId}`)
 }
 
+/** Прогноз модели: неизменяем, служит базой для диффа правок. */
 export async function getPrediction(jobId: string): Promise<Prediction> {
   if (USING_MOCK) return toApiError(async () => (await useMock()).getPrediction(jobId))
   return request(`${V1}/jobs/${jobId}/prediction`)
+}
+
+/**
+ * Актуальная разметка: правка человека, если она есть, иначе прогноз.
+ *
+ * Открывать редактор на прогнозе нельзя: он показал бы модель поверх уже
+ * сохранённой работы, а следующее сохранение стёрло бы её.
+ */
+export async function getAnnotation(jobId: string): Promise<Prediction> {
+  if (USING_MOCK) return toApiError(async () => (await useMock()).getPrediction(jobId))
+  return request(`${V1}/jobs/${jobId}/annotation?source=current`)
 }
 
 export async function saveReview(jobId: string, review: Review): Promise<ReviewResult> {

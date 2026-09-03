@@ -65,10 +65,11 @@ export const VideoStage = forwardRef<VideoHandle, Props>(function VideoStage(
 
   function play() {
     const v = videoRef.current
-    if (v) {
-      v.playbackRate = speed
-      void v.play().catch(() => setPlaying(false))
-    }
+    // Без ролика двигать нечего: раньше кнопка переключалась в «пауза», а
+    // playhead стоял на месте — интерфейс сообщал о том, чего не происходит.
+    if (!v) return
+    v.playbackRate = speed
+    void v.play().catch(() => setPlaying(false))
     setPlaying(true)
   }
 
@@ -155,7 +156,12 @@ export const VideoStage = forwardRef<VideoHandle, Props>(function VideoStage(
       </div>
 
       <div className="transport">
-        <button className="transport__play" onClick={() => (playing ? pause() : play())} title="Пробел">
+        <button
+          className="transport__play"
+          onClick={() => (playing ? pause() : play())}
+          disabled={!src}
+          title={src ? 'Пробел' : 'Видео недоступно'}
+        >
           {playing ? '❚❚' : '▶'}
         </button>
 

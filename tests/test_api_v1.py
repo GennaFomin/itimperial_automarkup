@@ -397,3 +397,106 @@ def test_jobs_list_serves_the_task_screen(client, clips):
     assert any(item["job_id"] == job_id for item in jobs_list)
     entry = next(item for item in jobs_list if item["job_id"] == job_id)
     assert entry["duration_ms"] > 0 and entry["filename"]
+
+def test_editor_reopens_on_the_saved_review_not_the_prediction(client, clips):
+    """Повторно открытая задача обязана показывать работу человека.
+
+    Редактор заполняет дорожку из /annotation. Если бы он читал /prediction, то
+    поверх сохранённой правки показал бы модель, а следующее сохранение стёрло
+    бы её — на задаче, которую список уже отмечает проверенной.
+    """
+    job_id = upload(client, clips["ok"])
+    wait_done(client, job_id)
+    prediction = client.get(f"/api/v1/jobs/{job_id}/prediction").json()
+    first = prediction["segments"][0]
+
+    client.post(
+        f"/api/v1/jobs/{job_id}/review",
+        json={
+            "prediction_id": prediction["prediction_id"],
+            "segments": [
+                {
+                    "id": first["id"],
+                    "origin": "model",
+                    "start_ms": first["start_ms"],
+                    "end_ms": first["end_ms"],
+                    "action": "переименовано человеком",
+                    "object": first["object"]["value"],
+                    "keyframe_ms": first["keyframe_ms"],
+                }
+            ],
+            "verified_ids": [first["id"]],
+            "time_spent_ms": 1000,
+        },
+    )
+
+    current = client.get(f"/api/v1/jobs/{job_id}/annotation").json()
+    assert current["source"] == "review"
+    assert [s["action"]["value"] for s in current["segments"]] == ["переименовано человеком"]
+    # Отметка проверки возвращается вместе с сегментом, иначе редактор попросил
+    # бы проверить заново то, что человек уже просмотрел.
+    assert current["segments"][0]["verified"] is True
+
+    # Прогноз при этом остаётся нетронутым — на нём считаются метрики.
+    again = client.get(f"/api/v1/jobs/{job_id}/prediction").json()
+    assert [s["action"]["value"] for s in again["segments"]] == [
+        s["action"]["value"] for s in prediction["segments"]
+    ]
+
+
+def test_verification_can_be_taken_back(client, clips):
+    """Снятую человеком отметку надо сохранять, а не накапливать.
+
+    Список подтверждённых авторитетен целиком: если бы он только добавлял,
+    ошибочно отмеченный шаг нельзя было бы вернуть в непроверенные.
+    """
+    job_id = upload(client, clips["ok"])
+    wait_done(client, job_id)
+    prediction = client.get(f"/api/v1/jobs/{job_id}/prediction").json()
+    segments = [
+        {
+            "id": s["id"],
+            "origin": "model",
+            "start_ms": s["start_ms"],
+            "end_ms": s["end_ms"],
+            "action": s["action"]["value"],
+            "object": s["object"]["value"],
+            "keyframe_ms": s["keyframe_ms"],
+        }
+        for s in prediction["segments"]
+    ]
+    body = {"prediction_id": prediction["prediction_id"], "segments": segments, "time_spent_ms": 0}
+
+    client.post(f"/api/v1/jobs/{job_id}/review", json={**body, "verified_ids": [segments[0]["id"]]})
+    assert client.get(f"/api/v1/jobs/{job_id}/annotation").json()["segments"][0]["verified"] is True
+
+    client.post(f"/api/v1/jobs/{job_id}/review", json={**body, "verified_ids": []})
+    assert client.get(f"/api/v1/jobs/{job_id}/annotation").json()["segments"][0]["verified"] is False
+
+
+def test_internal_api_still_answers_422_on_broken_annotation(client, clips):
+    """Обработчик ошибок контракта не должен ломать внутренний API.
+
+    Pydantic кладёт в подробности само исключение, которое json не сериализует:
+    без приведения любая невалидная разметка возвращала бы 500 вместо 422.
+    """
+    job_id = upload(client, clips["ok"])
+    wait_done(client, job_id)
+    response = client.put(
+        f"/api/videos/{job_id}/annotation",
+        json={
+            "video": {
+                "id": job_id,
+                "filename": "clip.mp4",
+                "duration_sec": 12,
+                "fps": 30,
+                "width": 1280,
+                "height": 720,
+            },
+            # Конец раньше начала — шаг невалиден.
+            "steps": [{"id": 0, "start_sec": 5, "end_sec": 1, "action": "a"}],
+            "provenance": {"app_version": "0", "pipeline": "stub", "vocabulary": "v"},
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert "detail" in response.json()

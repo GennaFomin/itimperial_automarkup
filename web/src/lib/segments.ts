@@ -55,7 +55,9 @@ export function fromPrediction(segments: PredictionSegment[]): EditableSegment[]
     action_confidence: s.action.confidence,
     object_confidence: s.object.confidence,
     edited: false,
-    verified: false,
+    // Отметка приходит с сервера: повторно открытая задача не должна просить
+    // проверить заново то, что человек уже просмотрел.
+    verified: s.verified ?? false,
   }))
 }
 

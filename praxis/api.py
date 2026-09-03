@@ -7,6 +7,7 @@ import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request, UploadFile
+from fastapi.encoders import jsonable_encoder
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -281,14 +282,17 @@ async def _http_error(request: Request, exc: HTTPException):
 @app.exception_handler(RequestValidationError)
 async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
     if not api_v1.is_contract_path(request):
-        return JSONResponse(status_code=422, content={"detail": exc.errors()})
+        # errors() кладёт в ctx само исключение ValueError, которое json.dumps
+        # сериализовать не умеет: без приведения внутренний API отвечал бы 500
+        # вместо 422 на любой невалидной разметке.
+        return JSONResponse(status_code=422, content={"detail": jsonable_encoder(exc.errors())})
     return JSONResponse(
         status_code=422,
         content={
             "error": {
                 "code": errors.INVALID_REVIEW,
                 "message": "Тело запроса не соответствует контракту",
-                "details": {"violations": [str(item) for item in exc.errors()]},
+                "details": {"violations": jsonable_encoder(exc.errors())},
             }
         },
     )

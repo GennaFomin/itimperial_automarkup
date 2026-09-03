@@ -5,6 +5,7 @@ import {
   USING_MOCK,
   cancelJob,
   frameUrl,
+  getAnnotation,
   getPrediction,
   getVocab,
   mediaUrl,
@@ -81,10 +82,13 @@ export function EditorScreen() {
           return
         }
         if (job.status === 'done' || job.status === 'done_with_errors') {
-          void Promise.all([getPrediction(jobId), getVocab()])
-            .then(([prediction, vocabDoc]) => {
+          // Дорожку заполняет актуальная разметка, а прогноз нужен отдельно:
+          // по нему считается дифф правок и он остаётся неизменяемым.
+          // В режиме замера прогноз не показывается, но база сравнения та же.
+          void Promise.all([getAnnotation(jobId), getPrediction(jobId), getVocab()])
+            .then(([annotation, prediction, vocabDoc]) => {
               if (cancelled) return
-              load(prediction, vocabDoc, mode)
+              load(annotation, vocabDoc, mode)
               setPhase({ kind: 'ready', prediction })
             })
             .catch((e: unknown) => {
@@ -141,17 +145,6 @@ export function EditorScreen() {
 
   useKeyboardShortcuts(phase.kind === 'ready', videoRef, actions, seek)
 
-  if (!task) {
-    return (
-      <div className="ed__loading">
-        <div className="empty__title">Задача не найдена</div>
-        <Link className="btn" to="/">
-          К списку задач
-        </Link>
-      </div>
-    )
-  }
-
   if (phase.kind === 'error') {
     return (
       <div className="ed__loading">
@@ -178,7 +171,7 @@ export function EditorScreen() {
           <p style={{ color: 'var(--text-dim)', textAlign: 'center', marginTop: 6 }}>
             {phase.slow
               ? 'Задача не потеряна и продолжает считаться. Можно подождать или отменить.'
-              : task.title}
+              : (task?.title ?? jobId)}
           </p>
         </div>
         <div className="ed__loading-bar">
@@ -203,7 +196,7 @@ export function EditorScreen() {
           <button
             className="btn btn--danger"
             onClick={() => {
-              void cancelJob(task.job_id).then(() => navigate('/'))
+              void cancelJob(jobId).then(() => navigate('/'))
             }}
           >
             Отменить обработку

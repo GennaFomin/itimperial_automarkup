@@ -107,6 +107,9 @@ def to_segment(step: Step, duration_ms: int) -> dict:
         "object": {"value": step.object or UNKNOWN, "confidence": None},
         "keyframe_ms": keyframe,
         "keyframe_confidence": None,
+        # Расширение контракта: без него редактор, открытый повторно, не знал бы,
+        # какие шаги человек уже просмотрел, и просил бы проверить их заново.
+        "verified": step.verified,
     }
 
 
@@ -267,7 +270,7 @@ def annotation_from_review(
     segments: list[dict],
     base: Annotation,
     prediction: Annotation | None,
-    verified_ids: set[str],
+    verified_ids: set[str] | None,
 ) -> tuple[Annotation, list[str], dict[str, str]]:
     """Собрать полный документ разметки из присланной правки.
 
@@ -329,9 +332,15 @@ def annotation_from_review(
             # остаётся модельной, у созданного руками её нет вовсе.
             confidence=existing.confidence if existing else None,
             source=_source_for(existing, predicted.get(new_id), origin, start, end, action, obj),
-            verified=raw_id in verified_ids
-            or (segment_id(new_id) in verified_ids)
-            or (existing.verified if existing and raw_id not in verified_ids else False),
+            # Список подтверждённых авторитетен целиком: иначе снятую человеком
+            # отметку нельзя было бы сохранить — она только накапливалась бы.
+            # Клиент, который поля вовсе не прислал, ничего про проверку не
+            # утверждает, и прежние отметки сохраняются.
+            verified=(
+                raw_id in verified_ids or segment_id(new_id) in verified_ids
+                if verified_ids is not None
+                else bool(existing and existing.verified)
+            ),
         )
         steps.append(step)
 

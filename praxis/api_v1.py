@@ -60,7 +60,10 @@ class ReviewIn(BaseModel):
     # Расширения контракта, оба необязательные и аддитивные.
     # Какие сегменты человек подтвердил глазами: в контракте такого поля нет,
     # а заказчику важно отличать проверенное от просто нетронутого.
-    verified_ids: list[str] = Field(default_factory=list)
+    # None и пустой список — разные утверждения: первое означает «клиент про
+    # проверку ничего не говорит», второе — «проверенных нет». Без различия
+    # снятую человеком отметку невозможно было бы сохранить.
+    verified_ids: list[str] | None = None
     # Замер разметки с нуля — знаменатель KPI «в три раза быстрее». Такая правка
     # намеренно не сохраняется поверх настоящей.
     mode: str = "review"
@@ -178,10 +181,35 @@ async def get_job(job_id: str) -> dict:
 
 @router.get("/jobs/{job_id}/prediction")
 async def get_prediction(job_id: str) -> dict:
+    """Прогноз модели. Неизменяем: на нём считаются метрики (§3)."""
     record = _record(job_id)
     payload = record["prediction"]
     annotation = _annotation(payload, job_id, record, "prediction")
     return contract_v1.to_prediction(annotation, record, payload)
+
+
+@router.get("/jobs/{job_id}/annotation")
+async def get_annotation(job_id: str, source: str = "current") -> dict:
+    """Актуальная разметка: правка человека, если она есть, иначе прогноз.
+
+    Расширение контракта, и оно обязательное. Без него редактор, открытый
+    повторно, показывал бы прогноз поверх уже сохранённой правки, а следующее
+    сохранение стирало бы её — на задаче, которую список отмечает как
+    проверенную. Форма ответа та же, что у прогноза, чтобы клиент читал их
+    одним кодом.
+    """
+    record = _record(job_id)
+    if source not in {"current", "review", "prediction"}:
+        raise ContractError(
+            422, errors.INVALID_REVIEW, "source: current, review или prediction"
+        )
+    payload = (
+        store.annotation_json(record) if source == "current" else record[source]
+    )
+    annotation = _annotation(payload, job_id, record, source)
+    document = contract_v1.to_prediction(annotation, record, record["prediction"] or payload)
+    document["source"] = "review" if record["review"] and source != "prediction" else "prediction"
+    return document
 
 
 @router.post("/jobs/{job_id}/review")
@@ -207,7 +235,7 @@ async def post_review(job_id: str, review: ReviewIn) -> dict:
             [segment.model_dump() for segment in review.segments],
             base=base,
             prediction=prediction,
-            verified_ids=set(review.verified_ids),
+            verified_ids=None if review.verified_ids is None else set(review.verified_ids),
         )
     except ValueError as error:
         raise ContractError(

@@ -93,6 +93,26 @@ await page.waitForSelector('button:has-text("Сохранено")', { timeout: 1
   .catch(() => errors.push('ПРАВКА НЕ СОХРАНИЛАСЬ'))
 await shot('L5-saved')
 
+console.log('▶ повторное открытие: правка на месте, а не прогноз')
+// Самый дорогой из возможных дефектов: если редактор откроется на прогнозе,
+// следующее сохранение сотрёт работу человека — на задаче, которую список уже
+// отмечает проверенной.
+const editedActions = await page.locator('.seg').evaluateAll((els) =>
+  els.map((el) => el.getAttribute('title')),
+)
+await page.reload()
+await page.waitForSelector('.tl__track', { timeout: 30000 })
+await page.waitForTimeout(2000)
+const reopened = await page.locator('.seg').evaluateAll((els) =>
+  els.map((el) => el.getAttribute('title')),
+)
+console.log(`  сегментов до перезагрузки: ${editedActions.length}, после: ${reopened.length}`)
+if (reopened.length !== editedActions.length) errors.push('ПОСЛЕ ПЕРЕОТКРЫТИЯ ПРАВКА ПОТЕРЯНА')
+const checkedAfter = await page.locator('.ed__stat-val').nth(3).textContent()
+console.log('  отметка проверки пережила перезагрузку:', checkedAfter)
+if (checkedAfter?.startsWith('0/')) errors.push('ОТМЕТКА ПРОВЕРКИ НЕ СОХРАНИЛАСЬ')
+await shot('L6-reopened')
+
 await browser.close()
 console.log('\n' + (errors.length ? '❌ ПРОБЛЕМЫ:\n' + errors.map(e=>'  - '+e).join('\n') : '✅ Связка UI ↔ пайплайн работает'))
 process.exit(errors.length ? 1 : 0)

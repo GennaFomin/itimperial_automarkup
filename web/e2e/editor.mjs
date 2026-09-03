@@ -146,16 +146,16 @@ console.log(`  ${cnt1} →undo ${cnt2} →redo ${cnt3}`)
 if (cnt1 === cnt2) errors.push('UNDO НЕ СРАБОТАЛ')
 if (cnt3 !== cnt1) errors.push('REDO НЕ ВЕРНУЛ СОСТОЯНИЕ')
 
-step('Воспроизведение и скорость 2×')
-await page.click('.transport__play')
-await page.waitForTimeout(1200)
-await page.click('.transport__speed:has-text("2×")')
-await page.waitForTimeout(800)
-const tc = await page.locator('.stage__tc').textContent()
-console.log('  таймкод во время игры:', tc?.trim())
-if (tc?.trim() === '00:00.000') errors.push('ВИДЕО НЕ ИГРАЕТ')
-await page.click('.transport__play')
-await shot('11-playing')
+step('Воспроизведение недоступно без видео')
+// Против фикстур ролика нет, и кнопка обязана быть выключена: раньше она
+// переключалась в «пауза», а playhead стоял на месте — интерфейс сообщал о том,
+// чего не происходит. Настоящее воспроизведение проверяет e2e/live.mjs.
+const playDisabled = await page.locator('.transport__play').isDisabled()
+console.log('  кнопка воспроизведения выключена:', playDisabled ? 'да' : 'НЕТ')
+if (!playDisabled) errors.push('КНОПКА ИГРАЕТ БЕЗ ВИДЕО')
+const explained = await page.locator('.stage__missing').count()
+if (!explained) errors.push('ОТСУТСТВИЕ ВИДЕО НЕ ОБЪЯСНЕНО')
+await shot('11-no-video')
 
 step('Экспорт')
 await page.click('button:has-text("Экспорт")')

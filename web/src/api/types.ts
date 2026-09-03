@@ -81,6 +81,8 @@ export interface PredictionSegment {
   /** null допустим: стадия keyframe могла упасть — сегмент есть, кадр не выбран. */
   keyframe_ms: number | null
   keyframe_confidence: number | null
+  /** Человек уже просмотрел этот шаг. Расширение контракта. */
+  verified?: boolean
 }
 
 export interface PredictionError {
