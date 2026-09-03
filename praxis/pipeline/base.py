@@ -67,6 +67,10 @@ def get_segmenter(name: str) -> Segmenter:
         from praxis.pipeline.physical import PhysicalSegmenter
 
         return PhysicalSegmenter()
+    if name == "ensemble":
+        from praxis.pipeline.ensemble import EnsembleSegmenter
+
+        return EnsembleSegmenter()
     if name == "learned-boundaries":
         from praxis.pipeline.learned import LearnedSegmenter
 

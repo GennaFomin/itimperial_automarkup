@@ -142,6 +142,10 @@ START_SHIFT = float(os.getenv("PRAXIS_START_SHIFT", "0.0"))
 END_SHIFT = float(os.getenv("PRAXIS_END_SHIFT", "0.0"))
 # Обучаемый детектор границ: адрес сервиса и порог на вероятность.
 TAS_BASE_URL = os.getenv("PRAXIS_TAS_BASE_URL", "")
+# Ансамбль: допуск совпадения разрезов, порог подтверждения и порог одиночного пика.
+ENSEMBLE_TOLERANCE_SEC = float(os.getenv("PRAXIS_ENSEMBLE_TOLERANCE_SEC", "0.5"))
+ENSEMBLE_CONFIRM = float(os.getenv("PRAXIS_ENSEMBLE_CONFIRM", "0.3"))
+ENSEMBLE_STRONG = float(os.getenv("PRAXIS_ENSEMBLE_STRONG", "0.9"))
 TAS_THRESHOLD = float(os.getenv("PRAXIS_TAS_THRESHOLD", "0.5"))
 PEAK_SIGMA = float(os.getenv("PRAXIS_PEAK_SIGMA", "1.0"))
 TSM_THRESHOLD = float(os.getenv("PRAXIS_TSM_THRESHOLD", "0.35"))
