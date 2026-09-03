@@ -523,6 +523,17 @@ def annotate(request: Request) -> dict:
     }
 
 
+def self_reported(answer: dict) -> float | None:
+    """Число из ответа модели, зажатое в 0..1; всё, что не число, — отсутствие оценки."""
+    try:
+        value = float(answer.get("confidence"))
+    except (TypeError, ValueError):
+        return None
+    if value != value:  # NaN
+        return None
+    return round(max(0.0, min(value, 1.0)), 3)
+
+
 def _apply(segment, answer: dict, request: Request, text: str) -> dict:
     """Притягиваем ответ модели к словарю и считаем уверенность."""
     # На второй ступени список действий сужен под найденный предмет — притягивать надо
@@ -532,15 +543,18 @@ def _apply(segment, answer: dict, request: Request, text: str) -> dict:
         # Ответ не притягиваем ни к какому списку — его нет. Только приводим к единому виду.
         action = canonical(str(answer.get("action", "")))
         obj = canonical(str(answer.get("object", "")))
-        confidence = CONFIDENCE_BOTH if (action and obj) else CONFIDENCE_ACTION_ONLY
+        # Уверенность — только та, что модель назвала сама. Константа по форме ответа
+        # («есть объект — 0.4») выглядела бы как измерение, делала бы все шаги одинаково
+        # неуверенными и обесценивала подсветку в редакторе. Нет числа — нет уверенности.
+        confidence = self_reported(answer)
         if not action or action == "unknown":
-            action, confidence = "unknown", CONFIDENCE_NONE
+            action, confidence = "unknown", None
         return {
             "id": segment.id,
             "action": action,
             "object": obj or None,
             "alternatives": [],
-            "confidence": round(confidence, 3),
+            "confidence": None if confidence is None else round(confidence, 3),
             "raw": text.strip()[:200],
         }
     action = closest(str(answer.get("action", "")), choices)

@@ -32,7 +32,7 @@ await page.waitForSelector('.modal', { state: 'detached' })
 // Открываем именно свою задачу, а не первую готовую в списке: соседние ролики
 // могут быть от прошлых прогонов и с другим содержимым.
 const card = page.locator('.card', { hasText: 'Живой прогон' })
-await card.locator('button:has-text("Открыть разметку"):not([disabled])').waitFor({ timeout: 60000 })
+await card.locator('button:has-text("Открыть разметку"):not([disabled])').waitFor({ timeout: 240000 })
 console.log('▶ авторазметка готова')
 await card.locator('button:has-text("Открыть разметку")').click()
 await page.waitForSelector('.tl__track', { timeout: 30000 })

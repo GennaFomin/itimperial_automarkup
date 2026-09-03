@@ -134,7 +134,9 @@ def capabilities() -> dict:
         "object_confidence": False,
         "keyframe_confidence": False,
         # Число есть, но оценивает связку «действие+объект», а не глагол отдельно.
-        "action_confidence": "pair",
+        # При открытом словаре число — самооценка модели из её же ответа; при закрытом —
+        # оценка пары «действие + объект» по форме ответа. Константы нет ни там, ни там.
+        "action_confidence": "self-reported" if config.OPEN_VOCABULARY else "pair",
         # У сегментаторов, кроме motion-dp, ключевой кадр — середина отрезка.
         "keyframe_source": "midpoint" if config.PIPELINE != "motion-dp" else "selected",
         "open_vocabulary": bool(config.OPEN_VOCABULARY),

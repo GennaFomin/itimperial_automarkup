@@ -94,7 +94,9 @@ def test_missing_confidences_are_null_not_invented(client, clips):
         assert segment["object"]["confidence"] is None
 
     assert prediction["capabilities"]["boundary_confidence"] is False
-    assert prediction["capabilities"]["action_confidence"] == "pair"
+    assert prediction["capabilities"]["action_confidence"] == (
+        "self-reported" if config.OPEN_VOCABULARY else "pair"
+    )
 
 
 def test_review_round_trip_is_a_noop(client, clips):
