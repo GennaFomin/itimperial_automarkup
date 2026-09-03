@@ -1,0 +1,26 @@
+.rpick {
+  position: absolute;
+  /* Над дорожкой, а не под ней: таймлайн прижат к низу экрана, и попап снизу
+     уезжал бы за край окна. */
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  z-index: 20;
+  width: 268px;
+  padding: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.rpick__title { font-size: 12.5px; font-weight: 700; }
+.rpick__sub { font-size: 11.5px; color: var(--text-dim); }
+.rpick__grid { display: flex; flex-wrap: wrap; gap: 5px; }
+.rpick__opt {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 9px; border-radius: 99px; cursor: pointer; font-size: 12px;
+  background: var(--surface-3); border: 1px solid var(--line); color: var(--text-muted);
+}
+.rpick__opt--on { border-color: var(--text); color: var(--text); }
+.rpick__row { display: flex; gap: 8px; }
+.rpick__row .btn { flex: 1; justify-content: center; }

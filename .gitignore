@@ -1,12 +1,26 @@
+# Python
 __pycache__/
 *.pyc
 .pytest_cache/
 .ruff_cache/
 .venv/
+
+# Node
 node_modules/
+node_modules/.tmp
 dist/
+dist-ssr/
+.vite/
+*.local
+
+# Данные прогонов
 work/
 # Только корневой каталог с сырыми датасетами — praxis/data со словарями нужен в репозитории.
 /data/
 *.db
 .env
+
+# Артефакты тестов
+.e2e-artifacts/
+
+.DS_Store

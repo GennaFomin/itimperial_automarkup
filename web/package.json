@@ -1,25 +1,32 @@
 {
-  "name": "web",
+  "name": "automarkup-ui",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "typecheck": "tsc -b --noEmit",
+    "test:unit": "esbuild tests/segments.test.ts --bundle --platform=node --format=esm --outfile=.e2e-artifacts/segments.test.mjs --log-level=warning && node .e2e-artifacts/segments.test.mjs",
+    "e2e:video": "node e2e/make-fixture-video.mjs .e2e-artifacts/video",
+    "e2e": "node e2e/editor.mjs .e2e-artifacts/video/clip.webm .e2e-artifacts/shots",
+    "e2e:scenarios": "node e2e/scenarios.mjs .e2e-artifacts/video/clip.webm .e2e-artifacts/shots",
+    "test": "npm run typecheck && npm run test:unit"
   },
   "dependencies": {
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "react-router-dom": "^7.7.1",
+    "zustand": "^5.0.7"
   },
   "devDependencies": {
-    "@types/node": "^24.13.3",
-    "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.4",
-    "@vitejs/plugin-react": "^6.1.0",
-    "oxlint": "^1.79.0",
-    "typescript": "~6.0.2",
-    "vite": "^8.2.2"
+    "@types/react": "^19.1.9",
+    "@types/react-dom": "^19.1.7",
+    "@vitejs/plugin-react": "^5.0.0",
+    "esbuild": "^0.25.0",
+    "playwright": "^1.56.0",
+    "typescript": "^5.8.3",
+    "vite": "^7.0.6"
   }
 }
