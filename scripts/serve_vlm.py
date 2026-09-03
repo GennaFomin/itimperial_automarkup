@@ -12,6 +12,7 @@ DL5 рядом с весами. Получает уже нарезанные с�
 from __future__ import annotations
 
 import argparse
+import os
 import base64
 import io
 import json
@@ -79,6 +80,10 @@ CONFIDENCE_NONE = 0.1
 
 # Сколько шагов кодировать за один проход. Упирается в память карты, а не в скорость.
 BATCH_SIZE = 4
+
+# Предел изображений на один проход. Именно он, а не число сегментов, определяет
+# потребление памяти: на 24 ГБ двадцать восемь картинок за проход уже не помещаются.
+MAX_IMAGES = int(os.getenv("PRAXIS_VLM_MAX_IMAGES", "12"))
 
 # Сколько кандидатов оценивать за один проход при скоринге.
 SCORE_BATCH = 8
@@ -458,7 +463,6 @@ def annotate(request: Request) -> dict:
             "elapsed_sec": round(time.perf_counter() - started, 2),
         }
 
-    batch_size = max(1, BATCH_SIZE)
     texts, image_groups = [], []
     for segment in request.segments:
         images = [decode(frame) for frame in segment.frames]
@@ -480,10 +484,23 @@ def annotate(request: Request) -> dict:
         image_groups.append(images)
 
     processor.tokenizer.padding_side = "left"
+    # Батч набирается по числу КАРТИНОК, а не сегментов. Кадров на шаг переменное число
+    # (пять внутри плюс два контекстных), и на мелкой нарезке фиксированный батч из
+    # четырёх сегментов давал под тридцать изображений за проход и переполнял карту.
+    batches: list[tuple[int, int]] = []
+    start = 0
+    while start < len(texts):
+        end, images = start, 0
+        while end < len(texts) and (end == start or images + len(image_groups[end]) <= MAX_IMAGES):
+            images += len(image_groups[end])
+            end += 1
+        batches.append((start, end))
+        start = end
+
     answers: list[str] = []
-    for start in range(0, len(texts), batch_size):
-        chunk_texts = texts[start : start + batch_size]
-        chunk_images = [image for group in image_groups[start : start + batch_size] for image in group]
+    for start, end in batches:
+        chunk_texts = texts[start:end]
+        chunk_images = [image for group in image_groups[start:end] for image in group]
         inputs = processor(
             text=chunk_texts, images=chunk_images, padding=True, return_tensors="pt"
         ).to(model.device)
