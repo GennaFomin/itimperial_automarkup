@@ -1,278 +1,269 @@
-# Praxis — автоматическая разметка действий по видео
+# Praxis — automatic action annotation for video
 
-Praxis берёт короткий ролик, сам делит его на шаги, определяет для каждого действие,
-объект и ключевой кадр, и отдаёт человеку готовый черновик разметки в редакторе.
-Дальше специалист **проверяет и правит**, а не размечает с нуля, и выгружает результат
-в JSON или CSV.
+Praxis takes a short clip, splits it into steps on its own, works out the action, the
+object and the keyframe for each one, and hands a reviewer a finished draft in a timeline
+editor. From there a specialist **checks and corrects** rather than annotating from
+scratch, and exports the result as JSON or CSV.
 
-## Быстрый старт
+Built for the AI Product Hack 2026 case by IT Imperial: annotate short manipulation clips
+so the resulting steps can be reused as a data layer for robotics.
+
+---
+
+## Quick start
 
 ### Docker
 
 ```bash
-docker compose up --build
-# открыть http://localhost:8000
+docker compose up --build       # then open http://localhost:8000
 ```
 
-### Локально
+### Local
 
-Нужны `ffmpeg`, Python 3.12 и Node 20+.
+Needs `ffmpeg`, Python 3.12 and Node 20+.
 
 ```bash
 uv venv ~/.venvs/praxis --python 3.12
 uv pip install --python ~/.venvs/praxis/bin/python -e ".[dev]"
-
 cd web && npm install && npm run build && cd ..
-
 ~/.venvs/praxis/bin/python -m uvicorn praxis.api:app --port 8000
-# открыть http://localhost:8000
 ```
 
-Для разработки фронта удобнее два процесса: `uvicorn` на 8000 и `npm run dev` в `web/`
-(Vite проксирует `/api` на бэкенд, открывать http://localhost:5173).
+The two model services run on a GPU box and are reached over HTTP; see
+[docs/PIPELINE.md](docs/PIPELINE.md) for the exact commands. Without them the app still
+runs — the timeline degrades to weaker features and steps arrive unlabelled, and the run
+says so in `warnings` rather than pretending to have succeeded.
 
-### Пример обработки
+### One clip end to end
 
 ```bash
-# ролик до 30 секунд, от 720p, MP4 или MOV
-curl -F "file=@examples/clip.mp4" http://localhost:8000/api/videos
-# {"id":"120711f1dab7", ...}
-
-curl http://localhost:8000/api/videos/120711f1dab7           # статус обработки
-curl http://localhost:8000/api/videos/120711f1dab7/export.json > annotation.json
-curl http://localhost:8000/api/videos/120711f1dab7/export.csv  > annotation.csv
+curl -F "file=@examples/clip.mp4" http://localhost:8000/api/videos   # 202 + job_id
+curl http://localhost:8000/api/videos/<id>                           # status, stage, progress
+curl http://localhost:8000/api/videos/<id>/export.json > annotation.json
 ```
 
-## Как устроено
+---
+
+## How it works
 
 ```
-видео → перцепция → временная структура → семантика → ключевой кадр → редактор → экспорт
+frames → features → boundaries → labels → validation → editor → export
 ```
 
-- **Перцепция.** Один проход ffmpeg даёт кадры в низком разрешении: из них считаются
-  сигнал движения для таймлайна и огрублённый вид кадра для нарезки.
-- **Временная структура.** Разбиение выбирается динамическим программированием: `dp[k][j]`
-  — минимальная стоимость покрытия первых `j` кадров ровно `k` отрезками, и каждое лишнее
-  разбиение оплачивается штрафом. Разрезы получают скидку там, где движение затихает: у
-  манипуляционных действий граница шага почти всегда совпадает с паузой. Штраф за отрезок
-  — единственная ручка гранулярности, и именно он защищает от пересегментации.
-- **Семантика.** Видеомодель получает уже нарезанные сегменты и только называет их парой
-  (действие, объект) из закрытого словаря — таймкоды она не двигает, потому что ставит их
-  плохо. Ответ притягивается к словарю; если сервис недоступен, шаги остаются без меток,
-  но разметка не разваливается.
-- **Редактор.** Таймлайн с плёнкой кадров и полосой движения, перетаскивание границ с
-  магнитом к найденным событиям, разделение и слияние шагов, словарные списки, горячие
-  клавиши, undo/redo, автосохранение.
-- **Разбор по неуверенности.** Модель отдаёт уверенность по каждому шагу, редактор
-  подсвечивает сомнительные, `Tab` прыгает к следующему непроверенному, `V` подтверждает
-  и сразу ведёт дальше, кнопка подтверждает всё оставшееся разом. Внимание уходит на
-  проблемные места, а не на весь ролик — отсюда и берётся сокращение ручной работы.
-- **Экспорт.** JSON и CSV, оба проходят валидацию схемой.
+The central design decision, and the one that took the longest to earn:
+**the language model never touches time.** It only names segments that have already been
+cut.
 
-Сегментатор спрятан за интерфейсом `praxis.pipeline.base.Segmenter`; переключается
-переменной `PRAXIS_PIPELINE`: `motion-dp` — рабочий, `stub` — равномерная нарезка для
-сравнения.
-
-## Что измерено
-
-Валидационный набор нарезан из Assembly101 вместе с его эталонной разметкой
-(`scripts/make_devset.py`) — ручной разметки не потребовалось, датасет уже размечен
-парами (глагол, объект) с границами по кадрам. **39 роликов по 10–28 секунд, 95 шагов**,
-из них 20 роликов сборки и 19 разборки. Разборка важна отдельно: она не использовалась
-при подборе параметров и содержит другое распределение глаголов, поэтому служит проверкой
-на подгонку.
-
-### Сегментация — цели кейса выполнены
-
-| метрика | заглушка | `motion-dp` | сборка | разборка |
-| --- | --- | --- | --- | --- |
-| step-F1 @ IoU 0.10 | 0.762 | **0.836** | 0.805 | 0.870 |
-| step-F1 @ IoU 0.25 | 0.747 | **0.826** | 0.785 | 0.870 |
-| step-F1 @ IoU 0.50 | 0.535 | **0.721** | 0.715 | 0.728 |
-| ошибка границ, среднее | 1.41 с | **1.53 с** | 1.65 с | 1.40 с |
-| обработка ролика | 1.0 с | **0.86 с** | | |
-
-Метки здесь не учитываются: их ставит отдельная стадия, и смешивать две разные ошибки в
-одной цифре нельзя. На разборке числа не хуже, чем на сборке, хотя параметры подбирались
-только по сборке — значит подгонки нет.
-
-Параметры подобраны `scripts/tune.py` по сетке. Со значениями наугад пайплайн резал на
-восемь кусков там, где в эталоне два-три, и проигрывал даже заглушке (F1@0.5 = 0.144).
-Вклад физики виден отдельно: при штрафе 0.2 вес границ 0 даёт 0.588, а 0.1 — 0.693.
-
-### Именование — честный отрицательный результат
-
-Сначала линейка (`scripts/baselines.py`), без которой любые цифры вводят в заблуждение:
-
-| базовый уровень | глагол | объект | пара |
-| --- | --- | --- | --- |
-| константа «всегда attach» (сборка) | **0.660** | — | — |
-| константа «всегда detach» (разборка) | **0.600** | — | — |
-| константа «всегда interior» | — | 0.180 | — |
-| константа «attach body» | — | — | 0.140 |
-
-Теперь что получилось. Все числа — при **эталонных** границах, то есть это чистое
-качество семантики (`scripts/eval_naming.py`):
-
-| подход | глагол | объект | пара |
-| --- | --- | --- | --- |
-| Qwen3-VL-8B, свободная генерация, 202 пары | 0.400 | 0.100 | 0.080 |
-| то же + кроп по рабочей зоне | 0.381 | 0.143 | 0.143 |
-| то же + словарь изделия (22 пары вместо 202) | 0.220 | 0.120 | 0.080 |
-| SigLIP2, скоринг пар | 0.060 | 0.040 | 0.020 |
-| SigLIP2, раздельно глагол и объект + калибровка | 0.060 | 0.040 | 0.020 |
-| SigLIP2, разность «конец минус начало» | 0.040 | — | — |
-
-**Ни один вариант не бьёт константу.** Это не недоработка промпта: у SigLIP2 разброс
-скоров внутри сегмента (0.009) меньше, чем между сегментами (0.020) — модель описывает,
-насколько кадр фотогеничен, а не что на нём делают. Контрастные модели измеримо слепы к
-глаголам, а детали Assembly101 — почти одинаковые серые пластиковые куски, чьи названия
-(`interior`, `rocker panel`, `base`) вне распределения текста CLIP.
-
-Что это значит по существу: **цель «действие+объект ≥ 80 %» на таксономии Assembly101
-недостижима в zero-shot** — она выше любого опубликованного результата полностью обученной
-модели на этом датасете (fine-grained action при эталонных границах — 48.0). Наша
-валидация намеренно жёстче вероятного целевого сеттинга: 202 пары здесь — это объединение
-по 101 разной игрушке, четыре из одиннадцати глаголов различаются только исходом
-(`attempt to attach` против `attach`), а детали визуально неразличимы. На обиходной
-таксономии из десятка действий и понятных предметов та же схема должна работать заметно
-лучше — это первое, что надо проверить, когда организаторы дадут свой список.
-
-### Второй домен: то же самое на кухне
-
-Вывод «именование не работает» требовал проверки на другой таксономии — иначе непонятно,
-дело в подходе или в данных. Второй набор собран из **EPIC-KITCHENS-100**
-(`scripts/make_epic_devset.py`): 16 роликов, 67 шагов, закрытый словарь из 20 действий и
-60 предметов. Устройство разметки то же — пара (глагол, объект) с границами, — но предметы
-обиходные: тарелка, ящик, кран.
-
-| | Assembly101 | | EPIC-KITCHENS | |
-| --- | --- | --- | --- | --- |
-| | модель | константа | модель | константа |
-| действие | 0.381 | **0.660** | **0.418** | 0.194 |
-| объект | 0.143 | 0.180 | **0.403** | 0.090 |
-| пара | 0.143 | 0.140 | **0.239** | 0.060 |
-
-На деталях игрушечных машин модель проигрывает константе, на обиходных предметах —
-обгоняет её вчетверо по паре и впятеро по объекту. **Пайплайн исправен; в тупик его
-загоняла таксономия**, где `interior`, `base` и `rocker panel` — почти одинаковые серые
-куски пластика, а четыре глагола из одиннадцати различаются только исходом попытки.
-
-Сегментация на кухне ведёт себя иначе: там шаг длится в среднем 3 секунды против 7–10 в
-Assembly101, и параметры под крупные шаги дают 0.604/0.526/0.357. После перенастройки
-одной командой (`scripts/tune.py`, штраф 0.3 → 0.15) — 0.733/0.719/0.439 и ошибка границ
-0.65 с вместо 1.39. Съёмка там эгоцентрическая, камера движется вместе с головой, и
-предположение «пауза в движении = граница шага» работает хуже, чем при статичной камере.
-
-Практический вывод: **гранулярность и домен — это настройки, а не константы**. Первое, что
-нужно сделать на площадке, — прогнать `tune.py` и `eval_naming.py` на данных организаторов;
-вся обвязка для этого готова.
-
-### Сквозной результат
-
-Полный пайплайн (нарезка + именование) на тех же 39 роликах:
-
-| | значение |
-| --- | --- |
-| step-F1 @ IoU 0.10 **со сверкой меток** | 0.104 |
-| step-F1 @ IoU 0.25 со сверкой меток | 0.085 |
-| step-F1 @ IoU 0.50 со сверкой меток | 0.062 |
-| step-F1 без учёта меток | 0.836 / 0.826 / 0.721 |
-| точность действия / объекта / пары | 0.290 / 0.101 / 0.087 |
-| обработка ролика | 18.5 с (предел кейса — 120 с) |
-
-Разрыв между 0.836 и 0.104 — это ровно цена меток. Публиковать надо обе цифры: первая
-показывает, что нарезка работает, вторая — что семантика на этой таксономии не работает
-ни у нас, ни у обученных моделей.
-
-Практический вывод для продукта: границы, ключевые кадры и порядок шагов система ставит
-надёжно, а метки предлагает как черновик с низкой уверенностью. Редактор подсвечивает их
-для проверки и показывает две-три альтернативы кнопками, чтобы исправление стоило одного
-нажатия. Сокращение ручной работы берётся из первого, а не из второго.
-
-## Формат разметки
-
-```json
-{
-  "video": { "id": "120711f1dab7", "filename": "clip.mp4", "duration_sec": 14.0,
-             "fps": 30.0, "width": 1280, "height": 720 },
-  "steps": [
-    { "id": 0, "level": "coarse", "parent_id": null,
-      "start_sec": 0.0, "end_sec": 7.0,
-      "action": "attach", "object": "wheel",
-      "keyframe_sec": 3.5, "confidence": 0.82, "source": "auto", "verified": false }
-  ],
-  "provenance": { "app_version": "0.1.0", "pipeline": "stub",
-                  "vocabulary": "assembly101-coarse", "models": {},
-                  "backend": "local", "processing_sec": 1.4,
-                  "created_at": "2026-08-31T00:15:00Z" }
-}
-```
-
-Схема гарантирует: шаги одного уровня не пересекаются, подшаг вложен в родителя,
-ключевой кадр лежит внутри шага, ничего не выходит за длительность видео. `source`
-показывает, что пришло от модели, а что поправил человек, `verified` — что человек на шаг
-смотрел и подтвердил его. Это разные вещи: правка означает, что шаг меняли, проверка — что
-его видели глазами; правка автоматически считается проверкой. Поле не входит в требования
-кейса, но для датасета под обучение роботов знать, что подтверждено человеком, а что
-проехало как есть, — ровно та метаинформация, за которую платят. Гасится переменной
-`PRAXIS_EXPORT_VERIFIED=0`, если приёмка окажется строгой к лишним полям.
-
-Блок `provenance` уходит в экспорт, чтобы результат был воспроизводим.
-
-CSV — тот же список плоскими строками:
-`video_id, filename, step_id, level, parent_id, start_sec, end_sec, duration_sec,
-action, object, keyframe_sec, confidence, source, verified`.
-
-## Словарь действий
-
-`praxis/data/vocab_assembly101_coarse.yaml` — 11 глаголов, 61 объект, 202 допустимые
-пары. Это черновик на основе coarse-таксономии Assembly101; когда заказчик даёт свой
-список, меняется только этот файл (или путь в `PRAXIS_VOCAB`). Значения вне словаря
-подсвечиваются в редакторе и перечисляются в ответе API.
-
-## Настройки
-
-| Переменная | Значение по умолчанию | Смысл |
+| stage | what runs | why this one |
 | --- | --- | --- |
-| `PRAXIS_WORK_DIR` | `./work` | Куда складывать видео, кадры и базу |
-| `PRAXIS_PIPELINE` | `motion-dp` | Какой сегментатор использовать (`stub` для сравнения) |
-| `PRAXIS_SEGMENT_PENALTY` | `0.3` | Штраф за отрезок — ручка гранулярности |
-| `PRAXIS_BOUNDARY_WEIGHT` | `0.2` | Насколько сильно тянуть разрезы в паузы движения |
-| `PRAXIS_MIN_SEGMENT_SEC` | `1.5` | Минимальная длина шага |
-| `PRAXIS_VOCAB` | встроенный | Путь к YAML со словарём |
-| `PRAXIS_VLM_BASE_URL` | пусто | Адрес vLLM или облачного API |
-| `PRAXIS_VLM_MODEL` | `Qwen/Qwen3-VL-8B-Instruct` | Модель для именования шагов |
-| `PRAXIS_MAX_DURATION` | `30` | Предел длительности ролика, секунды |
-| `PRAXIS_MIN_HEIGHT` | `720` | Минимальная высота кадра |
-| `PRAXIS_EXPORT_VERIFIED` | `1` | Писать ли отметку о проверке в экспорт |
+| frames | ffmpeg at 16 fps | one pass gives both the motion band and the encoder input |
+| features | TimeSformer-K400, 16-frame window, stride 4 | Kinetics-supervised features beat self-supervised ones on temporal tasks; cached on disk |
+| boundaries | penalised kernel change-point, exact DP | infers the step count itself from one penalty knob |
+| labels | Qwen3-VL-8B, open vocabulary, 5 frames + before/after context | no class list exists in advance, so the answer is generated, not picked |
+| validation | pydantic schema and invariants | no overlaps, keyframe inside its step, everything inside the duration |
+| export | the case owner's contract, integer milliseconds | `schema_version`, `model_version`, latency, cost, artifacts |
 
-## Разработка
+Granularity is a single knob, not a rewrite:
 
 ```bash
-~/.venvs/praxis/bin/python -m pytest -q      # 43 теста
-cd web && npm run build                      # проверка типов и сборка фронта
+# atomic actions — picked up, rotated, moved, put down (default)
+PRAXIS_TSM_PENALTY=2  PRAXIS_MIN_SEGMENT_SEC=0.5  PRAXIS_IDLE_RATIO=0
 
-# пакетный прогон и метрики
-python scripts/annotate.py --in data/devset/clips --out data/devset/pred
-python scripts/eval.py --gt data/devset/gt --pred data/devset/pred
-
-# подбор ручек сегментатора по валидационному набору
-python scripts/tune.py --clips data/devset/clips --gt data/devset/gt
+# coarse steps — 2-3 actions of several seconds with pauses between them
+PRAXIS_TSM_PENALTY=8  PRAXIS_MIN_SEGMENT_SEC=1.5  PRAXIS_IDLE_RATIO=0.3
 ```
 
-Видеомодель поднимается отдельно на GPU-машине, в своём venv, рядом с весами:
+---
 
-```bash
-CUDA_VISIBLE_DEVICES=2 HF_HOME=~/praxis/hf ~/praxis/venv/bin/python scripts/serve_vlm.py
-ssh -N -L 8100:127.0.0.1:8100 dl5          # проброс порта на ноутбук
-export PRAXIS_VLM_BASE_URL=http://127.0.0.1:8100
+## How we got here
+
+The path mattered more than any single result, so it is worth writing down.
+
+**We started from an end-to-end skeleton, not from a model.** Upload, background job,
+timeline editor, JSON/CSV export and a metrics harness existed before the segmenter did —
+the segmenter was a stub returning three equal thirds. That order is deliberate:
+integration on the last night kills more hackathon projects than weak models do.
+
+**The first real segmenter was dynamic programming over motion.** It beat the stub, and
+for two days it looked like the answer. It was not.
+
+**Naming failed, and the baselines were what revealed it.** The first naming stage scored
+0.400 on the verb while the constant "always attach" scored 0.660 — the model was worse
+than a fixed guess, and without a trivial baseline that is invisible. Four different
+approaches were measured; none beat the constant.
+
+**The dead end turned out to be the taxonomy, not the code.** Rather than tuning prompts,
+we rebuilt the same measurement on EPIC-KITCHENS. There the same pipeline beat the
+constants several times over — 0.418 against 0.194 on the action. Assembly101's parts are
+near-identical grey plastic pieces; the pipeline was fine, the data was unnameable.
+
+**Then the validation itself turned out to be broken — three times over.** Naming was
+being tuned on 67 segments where the noise floor was wider than every difference we were
+chasing, so several "negative results" were simply unmeasured. The sets did not match the
+case profile. And in the set we built ourselves, a greedy filter discarded 299 of 438
+labels and then penalised the model for answering with a discarded one. Bootstrap
+intervals, a case-profile set and multi-label scoring came out of that, and the naming
+number doubled — not because the model improved, but because we started measuring
+correctly.
+
+**The case owner's deck moved the target.** The scoring rule is one-to-one matching at
+IoU ≥ 0.5 **and a correct action class**. Our harness computed two quantities and neither
+was that rule. So segmentation and naming are one metric, not two, and it decomposes
+almost exactly into a product — which is how we learned that the verb, not time, gates
+everything.
+
+**The comparison with a language model was run properly, and it lost.** Two VLM
+segmenters were implemented, including the binary-search idea the team proposed. Both
+over-segment and cost several times more. One VLM trick did help — stamping the time into
+the pixels — and it drew the VLM level with DP at the strict threshold, but not ahead.
+
+**A uniform split beat our method, and that was the most useful failure.** On the
+household set, cutting the clip into three equal pieces scored 0.627 against 0.429 for
+our segmenter. That was a property of the benchmark: 2.2 steps of six seconds in a
+twenty-second clip *are* roughly thirds. On atomic annotation the ranking inverted
+completely and the uniform split collapsed from 0.627 to 0.288. The lesson is that a
+benchmark can flatter a trivial method, and only a second benchmark exposes it.
+
+**The winner came from the papers, not from tuning.** Penalised kernel change-point
+detection — the method behind `ruptures`, applied to video by Perochon and Oudre — beat
+everything we had written ourselves, and it decides the number of steps on its own
+instead of being told.
+
+---
+
+## What is measured
+
+Three validation sets, all built from public datasets with their own ground truth, so no
+manual annotation was needed:
+
+| set | source | clips | steps per clip | median step | what it is for |
+| --- | --- | --- | --- | --- | --- |
+| `pool_val` | Charades test split | 90 | 2.2 | 6.0 s | case profile: static camera, one person, gaps between steps |
+| `pool_atomic` | Assembly101 fine-grained | 85 | 9.0 | 0.87 s | atomic manipulation: pick up, rotate, move, put down |
+| `train_atomic` | Assembly101 fine-grained | 204 | 9.9 | 0.97 s | training the boundary head |
+
+### Boundary methods, one set and one metric
+
+Labels deliberately take no part here: the question is only about time. Household set, 90
+clips, 90% bootstrap intervals over clips.
+
+| method | F1@0.1 | F1@0.25 | F1@0.5 | 90% CI | steps | s/clip |
+| --- | --- | --- | --- | --- | --- | --- |
+| **kernel change-point** | 0.767 | 0.746 | **0.507** | 0.459–0.553 | 3.3 | **0.4** |
+| VLM asked directly | 0.718 | 0.699 | 0.541 | 0.478–0.602 | 3.9 | 25.3 |
+| VLM + time stamped in pixels | 0.735 | 0.705 | 0.567 | 0.498–0.639 | 3.9 | 22.3 |
+| motion DP (our earlier method) | 0.788 | 0.767 | 0.429 | 0.380–0.477 | 2.5 | 0.4 |
+| uniform split | 0.826 | 0.806 | 0.627 | 0.585–0.669 | 3.0 | 0.8 |
+| **VLM by binary search** | 0.559 | 0.509 | **0.198** | 0.143–0.255 | 6.0 | 58.6 |
+
+On atomic granularity — the regime the case actually describes — the ranking inverts:
+
+| method | F1@0.1 | F1@0.25 | F1@0.5 | steps (truth 9.9) |
+| --- | --- | --- | --- | --- |
+| feature-difference peaks | 0.726 | 0.708 | **0.450** | 14.0 |
+| **kernel change-point** | 0.710 | 0.677 | 0.401 | 14.6 |
+| uniform split into 10 | **0.795** | **0.733** | 0.288 | 10.0 |
+| motion DP | 0.684 | 0.589 | 0.231 | 14.0 |
+| motion minima | 0.603 | 0.483 | 0.142 | 13.9 |
+
+Peaks score higher at the strict threshold but were *given* the number of steps; the
+kernel method infers it. That is why the kernel method ships.
+
+### Feature encoders, same head
+
+| encoder | F1@0.1 | F1@0.25 | F1@0.5 | 90% CI | s/clip |
+| --- | --- | --- | --- | --- | --- |
+| VideoMAE | 0.785 | 0.750 | 0.536 | 0.484–0.588 | 10.2 |
+| V-JEPA 2 | 0.776 | 0.759 | 0.509 | 0.460–0.559 | 12.8 |
+| **TimeSformer-K400** | 0.767 | 0.746 | 0.507 | 0.459–0.553 | **9.6** |
+| DINOv2 | 0.764 | 0.739 | 0.507 | 0.459–0.556 | 12.8 |
+
+The intervals overlap completely: **the encoder barely matters here.** That refines the
+literature rather than contradicting it — EAST lifted Assembly101 by *fine-tuning* the
+encoder, not by swapping a frozen one. TimeSformer stays because it is the fastest.
+
+### Naming, ground-truth boundaries, open vocabulary
+
+90 clips, 197 segments, scored against every admissible label.
+
+| variant | action | object | pair |
+| --- | --- | --- | --- |
+| baseline, 5 frames | 0.523 | 0.660 | 0.386 |
+| **+ before/after context frames** | **0.558** | 0.660 | **0.426** |
+| 8 frames instead of 5 | 0.142 | 0.406 | 0.107 |
+
+Context frames are the only naming lever that worked. A paired test gives +0.036 with a
+90% interval of −0.010 to +0.081 — the direction is right, significance is not
+established, and it is enabled because it costs nothing in time. More frames actively
+hurt, by a factor of four.
+
+### End to end, under the case rule
+
+| | value | case target |
+| --- | --- | --- |
+| step-F1 (one-to-one, IoU ≥ 0.5, correct action) | 0.134 | ≥ 0.75 |
+| segmentation alone at IoU 0.5 | 0.495 | — |
+| action accuracy on matched steps | 0.269 | ≥ 0.80 |
+| boundary error, mean | 1.27 s | ≤ 2 s ✅ |
+| processing per clip | ~7 s | ≤ 120 s ✅ |
+| valid JSON / CSV | 100% | 100% ✅ |
+
+The metric decomposes into a product: 0.495 × 0.269 ≈ 0.134. **Naming is the bottleneck,
+not boundaries** — a point of verb accuracy is worth roughly twice a point of
+segmentation.
+
+For scale: on Assembly101 the *trained* state of the art is 0.328 and the common
+ASFormer and MS-TCN++ reach 0.214 and 0.206, while we run with no training at all. The
+ceiling with perfect naming on that set is 0.566, so the 0.75 target only makes sense in
+the case's own domain — a handful of verbs and a generic object.
+
+---
+
+## Tried and rejected, with numbers
+
+Everything below is measured and switched off, with the figures recorded next to the flag
+in code. The case owner's own rule applies: a new dependency without a measurable gain is
+not an improvement.
+
+| idea | result |
+| --- | --- |
+| VLM boundaries by binary search | F1@0.5 0.198 against 0.612, six steps instead of 2.6, 5× slower |
+| VLM boundaries asked directly | over-segments 4.0 against 2.5, 2× slower |
+| Recursive self-similarity parsing (UBoCo) | 0.251 at best |
+| TW-FINCH clustering | 0.367 |
+| Motion minima only | 0.142 |
+| Encoder swap (VideoMAE, V-JEPA 2, DINOv2) | within the interval |
+| 8 Hz feature grid instead of 4 Hz | 63% more expensive, no gain |
+| Edge trimming by activity | 0.507 → 0.348 on generous annotation |
+| Two-stage naming, three variants | object up to 0.626, pair down to 0.288 |
+| Neighbour-step context in the prompt | pair 0.209 against 0.224 |
+| Frame position labels as text | 0.194 against 0.224 |
+| Likelihood scoring instead of generation | 0.209 against 0.224, twice the time |
+| Joint parsing of the whole clip | 0.149 against 0.224 |
+| SAM2 crop around the tracked object | 0.090 against 0.224 on the pair |
+| Grounding DINO for the object | right object in top-5 in 17% of cases |
+| SigLIP2 classifier | does not beat a constant |
+| Block motion map | F1@0.5 0.605 against 0.715 |
+| Crop to the active region | 0.642 |
+| Temporal feature smoothing | 0.700 |
+
+---
+
+## Repository layout
+
+```
+praxis/            annotation contract, API, storage, pipeline stages
+  pipeline/        segmenters: similarity, baselines, clustering, learned, motion DP
+scripts/           model services, dataset builders, evaluation and sweep harnesses
+web/               React timeline editor
+docs/              case knowledge base, analysis, pipeline guide, papers
+tests/             56 tests
 ```
 
-## Данные и лицензии
+## Documentation
 
-- Assembly101 — CC BY-NC 4.0, используется как источник черновой таксономии и
-  валидационного набора. Некоммерческая лицензия: в продукте заказчику нужны свои данные.
-- Модели: Qwen3-VL, SAM2.1, SigLIP2, Grounding DINO — Apache-2.0.
-- Внешние платные API не используются: инференс идёт на своём железе, поэтому видео не
-  покидает контур.
+- [docs/PIPELINE.md](docs/PIPELINE.md) — what to run and which settings matter
+- [docs/CASE.md](docs/CASE.md) — the case requirements, contract and metric rule
+- [docs/BOUNDARIES.md](docs/BOUNDARIES.md) — the full boundary analysis with sources
+- [docs/READING.md](docs/READING.md) — what to read, and what to take from each paper
+- [docs/papers/](docs/papers/) — the papers themselves
