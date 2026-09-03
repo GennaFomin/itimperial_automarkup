@@ -61,7 +61,10 @@ def test_applies_labels_from_vocabulary():
     assert namer.payload["pairs"]["attach"]
 
 
-def test_rejects_values_outside_vocabulary():
+def test_rejects_values_outside_vocabulary(monkeypatch):
+    """Отсев выдуманных меток относится к закрытому словарю — включаем его явно."""
+    from praxis import config
+    monkeypatch.setattr(config, "OPEN_VOCABULARY", False)
     namer = FakeVlm([{"id": 0, "action": "танцует", "object": "банан", "confidence": 0.9}])
     result = namer.name_steps(Path("clip.mp4"), VIDEO, steps(), load_vocabulary())
 
