@@ -11,6 +11,7 @@ from praxis.schema import (
     steps_from_csv,
     to_csv,
 )
+from praxis import config
 from praxis.vocab import check_annotation, load_vocabulary
 
 VIDEO = VideoMeta(
@@ -102,7 +103,13 @@ def test_rejects_substep_with_unknown_parent():
         annotation(step(1, 0.0, 5.0, level=Level.fine, parent_id=7))
 
 
-def test_vocabulary_accepts_known_pairs_and_reports_unknown():
+def test_vocabulary_accepts_known_pairs_and_reports_unknown(monkeypatch):
+    """Закрытый словарь остался режимом: при нём метка вне списка — ошибка разметки.
+
+    По умолчанию словарь открытый (кейс требует называть любое действие), и тогда
+    сверять не с чем; здесь проверяется именно закрытый режим.
+    """
+    monkeypatch.setattr(config, "OPEN_VOCABULARY", False)
     vocab = load_vocabulary()
     assert vocab.is_valid_pair("attach", "wheel")
     assert not vocab.is_valid_pair("attach", "banana")

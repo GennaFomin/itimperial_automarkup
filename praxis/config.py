@@ -19,7 +19,10 @@ MIN_HEIGHT = int(os.getenv("PRAXIS_MIN_HEIGHT", "720"))
 ALLOWED_SUFFIXES = {".mp4", ".mov"}
 
 # Какой сегментатор поднимать: stub пока пайплайна нет, дальше — реальный.
-PIPELINE = os.getenv("PRAXIS_PIPELINE", "motion-dp")
+# Ядровой change-point со штрафом за сегмент. Выбран измерением: на 90 роликах даёт
+# F1@0.5 0.507 против 0.429 у прежнего motion-dp, а число шагов выводит сам, тогда как
+# базовым методам его приходится подсказывать. Полный разбор — docs/BOUNDARIES.md.
+PIPELINE = os.getenv("PRAXIS_PIPELINE", "tsm-kernel")
 
 # Куда ходить за VLM. Пусто — значит семантика недоступна и работает запасной путь.
 VLM_BASE_URL = os.getenv("PRAXIS_VLM_BASE_URL", "")
@@ -63,7 +66,7 @@ VLM_STAMP_TIME = os.getenv("PRAXIS_VLM_STAMP_TIME", "0").lower() not in {"0", "f
 # Кейс требует уметь назвать любое действие и любой предмет.
 # Язык ответов модели — должен совпадать с языком эталона.
 LANGUAGE = os.getenv("PRAXIS_LANGUAGE", "ru")
-OPEN_VOCABULARY = os.getenv("PRAXIS_OPEN_VOCABULARY", "0").lower() not in {"0", "false", "no"}
+OPEN_VOCABULARY = os.getenv("PRAXIS_OPEN_VOCABULARY", "1").lower() not in {"0", "false", "no"}
 # На сколько секунд наружу от шага брать дополнительные кадры «до» и «после».
 # Нужны для глаголов состояния: «взял» и «положил» неразличимы по середине действия.
 # Замер на 197 сегментах: действие 0.558 против 0.523, пара 0.426 против 0.386, предмет
@@ -162,8 +165,15 @@ COMPONENTS = int(os.getenv("PRAXIS_COMPONENTS", "0"))
 SEGMENT_PENALTY = float(os.getenv("PRAXIS_SEGMENT_PENALTY", "0.2"))
 BOUNDARY_WEIGHT = float(os.getenv("PRAXIS_BOUNDARY_WEIGHT", "0.1"))
 MAX_SEGMENTS = int(os.getenv("PRAXIS_MAX_SEGMENTS", "8"))
-MIN_SEGMENT_SEC = float(os.getenv("PRAXIS_MIN_SEGMENT_SEC", "1.5"))
+# Ручка гранулярности вместе с TSM_PENALTY. Замерено на двух режимах:
+#   бытовые сцены, 2.2 шага по 6 с   -> MIN_SEGMENT_SEC=1.5, TSM_PENALTY=8
+#   атомарные действия, 9 шагов по 1 с -> MIN_SEGMENT_SEC=0.5, TSM_PENALTY=2
+# По умолчанию стоит атомарный режим: кейсодатель показал ролики, где робот поднимает
+# предмет, поворачивает, переносит и опускает — это секунда-две на шаг.
+MIN_SEGMENT_SEC = float(os.getenv("PRAXIS_MIN_SEGMENT_SEC", "0.5"))
 # Ниже какой доли среднего движения по ролику отрезок считается паузой, а не шагом.
 # Ноль отключает пропуски и возвращает сплошное покрытие таймлайна.
-IDLE_RATIO = float(os.getenv("PRAXIS_IDLE_RATIO", "0.45"))
+# Доля от среднего движения, ниже которой сегмент считается паузой и в шаги не идёт.
+# Ноль отключает фильтр: на атомарной гранулярности шаги идут плотно и пауз почти нет.
+IDLE_RATIO = float(os.getenv("PRAXIS_IDLE_RATIO", "0.0"))
 MERGE_GAIN = float(os.getenv("PRAXIS_MERGE_GAIN", "0"))

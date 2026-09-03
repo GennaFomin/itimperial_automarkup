@@ -152,7 +152,15 @@ def train(request: TrainRequest) -> dict:
 
     state["model"] = model.eval()
     state["dim"] = dim
+    # Веса сразу на диск: обучение идёт по HTTP, и клиент может отвалиться вместе с
+    # ноутбуком. Модель в памяти сервиса переживёт разрыв соединения, но не перезапуск
+    # самого сервиса — а переобучать полчаса из-за этого незачем.
+    path = Path(state["checkpoint"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({"dim": dim, "weights": model.state_dict()}, path)
+
     return {
+        "saved_to": str(path),
         "trained_on": len(data),
         "dim": dim,
         "loss_first": history[0],
@@ -181,9 +189,20 @@ def main() -> None:
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8104)
+    parser.add_argument("--checkpoint", default="checkpoints/boundary.pt")
     args = parser.parse_args()
     state["device"] = args.device
-    print(f"детектор границ готов принимать обучение на {args.device}", flush=True)
+    state["checkpoint"] = args.checkpoint
+    # Если веса уже есть на диске — поднимаемся сразу обученными.
+    saved = Path(args.checkpoint)
+    if saved.exists():
+        payload = torch.load(saved, map_location=args.device)
+        model = BoundaryNet(payload["dim"]).to(args.device)
+        model.load_state_dict(payload["weights"])
+        state["model"] = model.eval()
+        state["dim"] = payload["dim"]
+        print(f"подняты сохранённые веса из {saved}", flush=True)
+    print(f"детектор границ готов на {args.device}", flush=True)
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 
 
