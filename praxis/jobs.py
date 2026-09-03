@@ -260,7 +260,9 @@ def annotate_clip(
         steps=steps,
         provenance=Provenance(
             app_version=_version(),
-            pipeline=segmenter.name,
+            # Имя того, кто реально резал: при откате детектора на ядровой метод
+            # версия модели в экспорте обязана сказать «tsm-kernel», а не имя настройки.
+            pipeline=result.models.get("segmenter", segmenter.name),
             vocabulary=vocabulary.name,
             models={**result.models, **named.models},
             backend=config.VLM_BASE_URL or "local",

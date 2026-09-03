@@ -40,7 +40,7 @@ def videos(tmp_path_factory) -> dict[str, Path]:
     directory = tmp_path_factory.mktemp("clips")
     return {
         "ok": make_video(directory / "ok.mp4", seconds=12),
-        "too_long": make_video(directory / "long.mp4", seconds=35),
+        "too_long": make_video(directory / "long.mp4", seconds=int(config.MAX_DURATION_SEC) + 5),
         "too_small": make_video(directory / "small.mp4", seconds=5, size="640x480"),
     }
 
@@ -347,4 +347,5 @@ def test_unavailable_boundary_detector_falls_back_and_is_reported(tmp_path, monk
     assert any("границы" in w and "change-point" in w for w in record["warnings"]), record["warnings"]
     provenance = Annotation.model_validate_json(store.get_video(video_id)["prediction"]).provenance
     assert provenance.models["segmenter"] == "tsm-kernel"
+    assert provenance.pipeline == "tsm-kernel", "model_version в экспорте не должен врать про откат"
 

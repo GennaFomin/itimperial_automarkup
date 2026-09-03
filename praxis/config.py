@@ -14,7 +14,10 @@ DB_PATH = WORK_DIR / "praxis.db"
 VOCAB_PATH = os.getenv("PRAXIS_VOCAB") or None
 
 # Требования кейса к входному видео.
-MAX_DURATION_SEC = float(os.getenv("PRAXIS_MAX_DURATION", "30"))
+# Верхняя граница длины ролика. Кейс обещает 10–30 с, но скрытый набор мы не видели,
+# а отказ на 35-секундном ролике на финале хуже медленного прогона: 120 с — это тот же
+# предел, что у времени обработки в кейсе.
+MAX_DURATION_SEC = float(os.getenv("PRAXIS_MAX_DURATION", "120"))
 MIN_HEIGHT = int(os.getenv("PRAXIS_MIN_HEIGHT", "720"))
 ALLOWED_SUFFIXES = {".mp4", ".mov"}
 

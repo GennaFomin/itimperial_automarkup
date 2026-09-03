@@ -32,7 +32,7 @@ def clips(tmp_path_factory) -> dict:
     directory = tmp_path_factory.mktemp("v1clips")
     return {
         "ok": make_video(directory / "ok.mp4", seconds=12),
-        "too_long": make_video(directory / "long.mp4", seconds=35),
+        "too_long": make_video(directory / "long.mp4", seconds=int(config.MAX_DURATION_SEC) + 5),
         "too_small": make_video(directory / "small.mp4", seconds=5, size="640x480"),
     }
 
