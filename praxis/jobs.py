@@ -235,6 +235,13 @@ def annotate_clip(
     named = namer.name_steps(source, meta, result.steps, vocabulary, perception.crop)
     name_sec = time.perf_counter() - at_name
 
+    # При открытом словаре заглушки сегментатора — глаголы из встроенного списка — не
+    # ответ. Если именование не отработало, честнее показать unknown на каждом шаге:
+    # человек увидит, что метки нет, а не примет случайное слово за предсказание.
+    if config.OPEN_VOCABULARY and named.models.get("namer_status"):
+        for step in named.steps:
+            step.action, step.object = "unknown", None
+
     # Соседние куски с одинаковой меткой — это один шаг, разрезанный по смене картинки.
     # Понять это можно только после именования, поэтому склейка здесь, а не в сегментаторе.
     alternatives = dict(named.alternatives)

@@ -349,3 +349,23 @@ def test_unavailable_boundary_detector_falls_back_and_is_reported(tmp_path, monk
     assert provenance.models["segmenter"] == "tsm-kernel"
     assert provenance.pipeline == "tsm-kernel", "model_version в экспорте не должен врать про откат"
 
+
+def test_open_vocabulary_without_namer_yields_unknown_not_a_placeholder(tmp_path, monkeypatch, videos):
+    """Без именования при открытом словаре шаг обязан называться unknown: первый глагол
+    из встроенного списка выглядел бы как предсказание, которого не было."""
+    monkeypatch.setattr(config, "WORK_DIR", tmp_path / "work")
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "work" / "praxis.db")
+    monkeypatch.setattr(config, "PIPELINE", "stub")
+    monkeypatch.setattr(config, "OPEN_VOCABULARY", True)
+    monkeypatch.setattr(config, "NAMER", "vlm")
+    monkeypatch.setattr(config, "VLM_BASE_URL", "http://127.0.0.1:9")  # порт закрыт всегда
+
+    with TestClient(app=_app()) as client:
+        video_id = upload(client, videos["ok"]).json()["id"]
+        record = client.get(f"/api/videos/{video_id}").json()
+
+    assert record["status"] == "done"
+    assert any("именование" in w for w in record["warnings"])
+    annotation = Annotation.model_validate_json(store.get_video(video_id)["prediction"])
+    assert {step.action for step in annotation.steps} == {"unknown"}
+

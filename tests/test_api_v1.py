@@ -500,3 +500,39 @@ def test_internal_api_still_answers_422_on_broken_annotation(client, clips):
     )
     assert response.status_code == 422, response.text
     assert "detail" in response.json()
+
+
+def test_review_accepts_free_labels_when_vocabulary_is_open(client, clips, monkeypatch):
+    """Словаря у заказчика нет: человек обязан иметь право вписать любой глагол и объект,
+    и бэкенд не должен отклонять такую правку как «вне списка»."""
+    monkeypatch.setattr(config, "OPEN_VOCABULARY", True)
+    job_id = upload(client, clips["ok"])
+    wait_done(client, job_id)
+    prediction = client.get(f"/api/v1/jobs/{job_id}/prediction").json()
+
+    segments = [
+        {
+            "id": segment["id"],
+            "origin": "model",
+            "start_ms": segment["start_ms"],
+            "end_ms": segment["end_ms"],
+            "action": segment["action"]["value"],
+            "object": segment["object"]["value"],
+            "keyframe_ms": segment["keyframe_ms"],
+        }
+        for segment in prediction["segments"]
+    ]
+    segments[0]["action"], segments[0]["object"] = "повернул бутылку", "бутылка с водой"
+    response = client.post(
+        f"/api/v1/jobs/{job_id}/review",
+        json={"prediction_id": prediction["prediction_id"], "reviewer": "tester",
+              "segments": segments, "time_spent_ms": 1000},
+    )
+    assert response.status_code == 200, response.text
+
+    saved = Annotation.model_validate_json(store.get_video(job_id)["review"])
+    assert saved.steps[0].action == "повернул бутылку"
+    assert saved.steps[0].object == "бутылка с водой"
+    exported = client.get(f"/api/v1/jobs/{job_id}/export?format=json").json()
+    assert exported["steps"][0]["action"] == "повернул бутылку"
+

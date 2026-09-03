@@ -29,6 +29,7 @@ export function SegmentInspector({ actions, objects, onSeek }: Props) {
   const applyVerify = useEditorStore((s) => s.applyVerify)
   const applySplit = useEditorStore((s) => s.applySplit)
   const zoomToSegment = useEditorStore((s) => s.zoomToSegment)
+  const openVocabulary = useEditorStore((s) => s.vocab?.open ?? false)
 
   const seg = segments.find((s) => s.id === selectedId) ?? null
   const index = seg ? segments.findIndex((s) => s.id === seg.id) : -1
@@ -75,6 +76,13 @@ export function SegmentInspector({ actions, objects, onSeek }: Props) {
 
       <div>
         <div className="insp__section-label">Действие</div>
+        {openVocabulary && (
+          <FreeText
+            value={seg.action}
+            placeholder="любое действие, например: повернул бутылку"
+            onCommit={(value) => applyUpdate(seg.id, { action: value })}
+          />
+        )}
         <div className="opts">
           {actions.map((a, i) => (
             <button
@@ -93,6 +101,13 @@ export function SegmentInspector({ actions, objects, onSeek }: Props) {
 
       <div>
         <div className="insp__section-label">Объект</div>
+        {openVocabulary && (
+          <FreeText
+            value={seg.object === 'unknown' ? '' : seg.object}
+            placeholder="любой объект, например: бутылка"
+            onCommit={(value) => applyUpdate(seg.id, { object: value })}
+          />
+        )}
         <div className="opts">
           {objects.map((o) => (
             <button
@@ -266,3 +281,44 @@ function TimeField({
     </div>
   )
 }
+
+/**
+ * Свободный ввод метки при открытом словаре.
+ *
+ * Модель отвечает своими словами, и её метки в списке кнопок нет — кнопки остаются
+ * быстрыми подсказками, а исправить или вписать своё можно только текстом. Пустой ввод
+ * ничего не меняет: удаление метки — это не правка, а её отсутствие.
+ */
+function FreeText({
+  value,
+  placeholder,
+  onCommit,
+}: {
+  value: string
+  placeholder: string
+  onCommit: (value: string) => void
+}) {
+  const [text, setText] = useState(value)
+  useEffect(() => setText(value), [value])
+  const commit = () => {
+    const next = text.trim()
+    if (next && next !== value) onCommit(next)
+  }
+  return (
+    <input
+      className="input"
+      style={{ width: '100%', marginBottom: 6 }}
+      value={text}
+      placeholder={placeholder}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault()
+          ;(e.target as HTMLInputElement).blur()
+        }
+      }}
+    />
+  )
+}
+
