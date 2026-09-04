@@ -1,0 +1,18 @@
+# Сборочный контекст: в образ едут только исходники и манифесты.
+.git
+.venv
+work
+node_modules
+web/node_modules
+web/dist
+web/.e2e-artifacts
+web/e2e
+web/tests
+tests
+docs/papers
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+*.db
+.env

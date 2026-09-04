@@ -1,0 +1,296 @@
+# Черновой словарь: coarse-таксономия Assembly101 (202 действия = 11 глаголов x 61 объект).
+# Заменяется целиком, когда организаторы дадут свой список.
+name: assembly101-coarse
+version: 1
+description: "Coarse action taxonomy of Assembly101 (CC BY-NC 4.0), used as a placeholder"
+
+actions:
+  - inspect
+  - attach
+  - detach
+  - screw
+  - demonstrate
+  - unscrew
+  - "attempt to attach"
+  - "attempt to detach"
+  - "attempt to screw"
+  - position
+  - remove
+
+objects:
+  - toy
+  - cabin
+  - wheel
+  - chassis
+  - functionality
+  - interior
+  - roof
+  - bumper
+  - body
+  - base
+  - arm
+  - "arm connector"
+  - bucket
+  - light
+  - "water tank"
+  - "dump bed"
+  - door
+  - step
+  - "excavator arm"
+  - track
+  - grill
+  - "crane arm"
+  - "turntable base"
+  - "sound module"
+  - roller
+  - "turntable top"
+  - "transport cabin"
+  - container
+  - mixer
+  - "engine cover"
+  - nut
+  - strap
+  - "clamp arm"
+  - "bulldozer arm"
+  - "ladder basket"
+  - "mixer stand"
+  - "roller arm"
+  - "back seat"
+  - "push frame"
+  - "jackhammer arm"
+  - "cabin window"
+  - figurine
+  - dashboard
+  - cylinder
+  - jackhammer
+  - "cabin back"
+  - ladder
+  - lid
+  - hook
+  - blade
+  - spoiler
+  - basket
+  - "fire extinguisher"
+  - "rocker panel"
+  - clamp
+  - tilter
+  - connector
+  - windshield
+  - engine
+  - "fire equipment"
+  - battery
+
+pairs:
+  inspect:
+    - toy
+    - chassis
+    - cabin
+    - body
+    - "dump bed"
+    - container
+    - "water tank"
+  attach:
+    - cabin
+    - wheel
+    - interior
+    - roof
+    - bumper
+    - body
+    - base
+    - arm
+    - "arm connector"
+    - bucket
+    - "water tank"
+    - light
+    - "dump bed"
+    - door
+    - step
+    - "excavator arm"
+    - track
+    - chassis
+    - grill
+    - "crane arm"
+    - "turntable base"
+    - "sound module"
+    - "turntable top"
+    - "transport cabin"
+    - container
+    - roller
+    - mixer
+    - nut
+    - strap
+    - "engine cover"
+    - "mixer stand"
+    - "clamp arm"
+    - "back seat"
+    - "jackhammer arm"
+    - "ladder basket"
+    - "roller arm"
+    - "bulldozer arm"
+    - "cabin window"
+    - dashboard
+    - "push frame"
+    - cylinder
+    - "cabin back"
+    - ladder
+    - lid
+    - jackhammer
+    - hook
+    - spoiler
+    - blade
+    - basket
+    - "fire extinguisher"
+    - "rocker panel"
+    - tilter
+    - clamp
+    - connector
+    - windshield
+    - engine
+    - "fire equipment"
+    - battery
+  detach:
+    - cabin
+    - wheel
+    - roof
+    - interior
+    - bumper
+    - body
+    - base
+    - arm
+    - bucket
+    - "arm connector"
+    - light
+    - chassis
+    - "water tank"
+    - "dump bed"
+    - step
+    - "excavator arm"
+    - track
+    - door
+    - "crane arm"
+    - grill
+    - roller
+    - "turntable base"
+    - "turntable top"
+    - "transport cabin"
+    - "sound module"
+    - "engine cover"
+    - container
+    - mixer
+    - "clamp arm"
+    - "bulldozer arm"
+    - "ladder basket"
+    - "roller arm"
+    - "mixer stand"
+    - strap
+    - "push frame"
+    - "cabin window"
+    - "jackhammer arm"
+    - "back seat"
+    - jackhammer
+    - dashboard
+    - hook
+    - blade
+    - lid
+    - cylinder
+    - basket
+    - "fire extinguisher"
+    - "rocker panel"
+    - clamp
+    - ladder
+    - nut
+    - tilter
+    - spoiler
+    - "cabin back"
+    - windshield
+    - engine
+    - connector
+    - "fire equipment"
+    - battery
+  screw:
+    - chassis
+    - interior
+    - cabin
+    - arm
+    - body
+    - roof
+    - wheel
+    - bumper
+    - container
+    - base
+    - "transport cabin"
+    - "arm connector"
+    - hook
+    - "dump bed"
+    - strap
+    - "turntable top"
+    - "rocker panel"
+    - roller
+    - "mixer stand"
+    - grill
+  demonstrate:
+    - functionality
+  unscrew:
+    - chassis
+    - interior
+    - cabin
+    - bumper
+    - arm
+    - body
+    - roof
+    - "arm connector"
+    - bucket
+    - base
+    - grill
+    - strap
+    - "mixer stand"
+    - container
+    - "turntable top"
+    - hook
+    - wheel
+    - "dump bed"
+    - spoiler
+    - lid
+    - roller
+    - "engine cover"
+  "attempt to attach":
+    - cabin
+    - body
+    - bumper
+    - base
+    - arm
+    - interior
+    - "arm connector"
+    - "dump bed"
+    - roof
+    - wheel
+    - "turntable base"
+    - nut
+    - "water tank"
+    - "excavator arm"
+    - "engine cover"
+    - bucket
+    - track
+    - door
+    - "bulldozer arm"
+    - "roller arm"
+    - cylinder
+    - "transport cabin"
+    - "rocker panel"
+    - strap
+    - "sound module"
+  "attempt to detach":
+    - cabin
+    - body
+    - interior
+    - base
+    - wheel
+    - basket
+    - light
+    - "crane arm"
+  "attempt to screw":
+    - chassis
+  position:
+    - figurine
+  remove:
+    - figurine
