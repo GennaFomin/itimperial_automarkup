@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Query, Request, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
@@ -243,7 +243,7 @@ async def post_review(job_id: str, review: ReviewIn) -> dict:
         ) from error
 
     problems += check_annotation(annotation, load_vocabulary(config.VOCAB_PATH))
-    saved_at = datetime.now(UTC).isoformat()
+    saved_at = datetime.now(timezone.utc).isoformat()
 
     if review.mode == "scratch":
         # Замер ручной разметки не должен затирать настоящую правку: иначе
