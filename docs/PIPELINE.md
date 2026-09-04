@@ -55,6 +55,20 @@ CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=5 \
     python scripts/serve_tas.py --port 8104
 ```
 
+**ffmpeg обязан быть собран с libx264.** Копия ролика для сервиса признаков пережимается
+именно им, и детектор границ обучен на таких признаках. Со сборкой без libx264 запасной
+mjpeg даёт визуально почти то же самое, файл в шестьдесят раз больше — и **одну границу
+вместо семи**: для детектора это признаки из другого распределения. Проверить:
+`ffmpeg -hide_banner -encoders | grep libx264`. Если пусто, статическая сборка ставится
+без прав администратора:
+
+```bash
+curl -sLO https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
+tar xf ffmpeg-release-amd64-static.tar.xz
+mkdir -p ~/bin && cp ffmpeg-*-static/ffmpeg ffmpeg-*-static/ffprobe ~/bin/
+export PATH="$HOME/bin:$PATH"
+```
+
 Перезапуск сервиса — **двумя разными ssh-вызовами**: остановка и старт. `pkill -f` в одной
 команде со стартом убивает саму удалённую оболочку, потому что её командная строка
 содержит имя скрипта; сервис гибнет молча, лог обрывается сразу после «готово».

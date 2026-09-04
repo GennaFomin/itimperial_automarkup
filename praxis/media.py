@@ -154,9 +154,14 @@ def _upload_encoder() -> list[str]:
         except (OSError, subprocess.SubprocessError):
             encoders = ""
         if " libx264" in encoders:
-            _upload_encoder.cached = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "30"]
+            _upload_encoder.cached = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "30",
+                                      "-pix_fmt", "yuv420p"]
         else:
-            _upload_encoder.cached = ["-c:v", "mpeg4", "-qscale:v", "6"]
+            # mjpeg покадровый и заметно чище mpeg4 на тех же настройках. Формат
+            # пикселей у него свой: yuv420p он не принимает и падает «Could not open
+            # encoder», а прогон молча уходит на серые блоки.
+            _upload_encoder.cached = ["-c:v", "mjpeg", "-qscale:v", "2",
+                                      "-pix_fmt", "yuvj420p"]
     return _upload_encoder.cached
 
 
@@ -168,8 +173,7 @@ def transcode_for_upload(video: Path, out: Path, height: int = 384) -> Path:
     _run(
         [
             "ffmpeg", "-y", "-v", "error", "-i", str(video),
-            "-vf", f"scale=-2:{height}", *_upload_encoder(),
-            "-pix_fmt", "yuv420p", "-an", str(out),
+            "-vf", f"scale=-2:{height}", *_upload_encoder(), "-an", str(out),
         ]
     )
     return out

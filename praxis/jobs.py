@@ -113,6 +113,10 @@ def _video_features(source: Path) -> dict | None:
     with tempfile.TemporaryDirectory() as directory:
         small = Path(directory) / "small.mp4"
         try:
+            # Копия всегда одна и та же — высотой 256. Дело не только в размере
+            # пересылки: признаки считаются от того, что отправлено, и оригинал 720p
+            # даёт другие векторы, чем уменьшенная копия. Отправлять разное с разных
+            # машин значит получать разную нарезку одного ролика.
             media.transcode_for_upload(source, small, height=256)
             payload = {
                 "video": base64.b64encode(small.read_bytes()).decode(),
