@@ -104,3 +104,28 @@ def test_learned_segmenter_falls_back_to_kernel_and_says_so(monkeypatch):
     assert len(result.steps) >= 2, "откат обязан резать, а не отдавать один шаг"
     assert result.models["segmenter"] == "tsm-kernel"
     assert "детектор границ" in result.models["segmenter_status"]
+
+
+def test_learned_segmenter_skips_the_detector_on_degraded_features(monkeypatch):
+    """Признаки серых блоков имеют другую размерность, и детектор отвечает на них 500.
+    Звать его в таком прогоне нельзя — сразу ядровой, с причиной в статусе."""
+    import numpy as np
+
+    from praxis import config
+    from praxis.pipeline.base import Perception, get_segmenter
+    from praxis.schema import VideoMeta
+    from praxis.vocab import load_vocabulary
+
+    monkeypatch.setattr(config, "TAS_BASE_URL", "http://127.0.0.1:9")
+    monkeypatch.setattr(config, "MIN_SEGMENT_SEC", 0.5)
+    monkeypatch.setattr(config, "IDLE_RATIO", 0.0)
+    rng = np.random.default_rng(1)
+    features = np.vstack([rng.normal(size=(40, 64)), 5 + rng.normal(size=(40, 64))]).astype(np.float32)
+    perception = Perception(fps=8.0, motion=np.ones(80), appearance=features,
+                            degraded=("сервис признаков недоступен: нарезка на серых блоках",))
+    meta = VideoMeta(id="v", filename="v.mp4", duration_sec=10.0, fps=30.0, width=1280, height=720)
+
+    result = get_segmenter("learned-boundaries").run(Path("v.mp4"), meta, load_vocabulary(), perception)
+
+    assert result.models["segmenter"] == "tsm-kernel"
+    assert "признаки просели" in result.models["segmenter_status"]

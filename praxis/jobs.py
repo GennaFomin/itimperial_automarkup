@@ -67,6 +67,12 @@ def _remote_embeddings(source: Path) -> np.ndarray | None:
     return raw.reshape(answer["count"], answer["dim"]).astype(np.float32)
 
 
+# Почему в прошлый раз не получилось взять признаки. Нужно, чтобы прогон называл
+# настоящую причину: местная поломка перекодирования и недоступный сервис лечатся
+# по-разному, а сообщение про «сервис недоступен» отправляло искать не туда.
+_FEATURE_FAILURE = {"reason": ""}
+
+
 def _feature_cache_path(source: Path) -> Path:
     """Ключ кэша: сам файл плюс всё, что влияет на признаки.
 
@@ -91,6 +97,7 @@ def _video_features(source: Path) -> dict | None:
     """
     if config.FEATURES != "video" or not config.VIDEO_BASE_URL:
         return None
+    _FEATURE_FAILURE["reason"] = ""
 
     cached = _feature_cache_path(source)
     if config.FEATURE_CACHE and cached.exists():
@@ -121,7 +128,13 @@ def _video_features(source: Path) -> dict | None:
             )
             with urllib.request.urlopen(request, timeout=config.VLM_TIMEOUT) as response:
                 answer = json.loads(response.read())
-        except (urllib.error.URLError, OSError, TimeoutError, ValueError, media.MediaError):
+        except media.MediaError as error:
+            # Причина местная, а не сетевая: сообщать здесь про «сервис недоступен»
+            # значит отправлять искать поломку не туда.
+            _FEATURE_FAILURE["reason"] = f"не удалось подготовить копию ролика: {error}"
+            return None
+        except (urllib.error.URLError, OSError, TimeoutError, ValueError) as error:
+            _FEATURE_FAILURE["reason"] = f"сервис признаков недоступен: {error}"
             return None
 
     if not answer.get("count"):
@@ -188,7 +201,8 @@ def perceive(source: Path) -> Perception:
         appearance, motion = appearance[:length], motion[:length]
     else:
         appearance = media.appearance_from_frames(frames)
-        degraded = ("сервис признаков недоступен: нарезка на серых блоках",) if wanted_remote else ()
+        reason = _FEATURE_FAILURE["reason"] or "сервис признаков недоступен"
+        degraded = (f"{reason}: нарезка на серых блоках",) if wanted_remote else ()
         return Perception(
             fps=fps,
             motion=motion,

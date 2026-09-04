@@ -139,13 +139,37 @@ def filmstrip(
     return sorted(path.name for path in out_dir.glob("strip_*.jpg"))
 
 
+def _upload_encoder() -> list[str]:
+    """Чем сжимать копию для отправки: libx264, если он есть, иначе встроенный mpeg4.
+
+    Сборки ffmpeg без libx264 встречаются на серверах, и там перекодирование падало,
+    а прогон сообщал «сервис признаков недоступен» — то есть указывал не на ту причину.
+    """
+    if _upload_encoder.cached is None:
+        try:
+            encoders = subprocess.run(
+                ["ffmpeg", "-hide_banner", "-encoders"],
+                capture_output=True, text=True, timeout=20, check=False,
+            ).stdout
+        except (OSError, subprocess.SubprocessError):
+            encoders = ""
+        if " libx264" in encoders:
+            _upload_encoder.cached = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "30"]
+        else:
+            _upload_encoder.cached = ["-c:v", "mpeg4", "-qscale:v", "6"]
+    return _upload_encoder.cached
+
+
+_upload_encoder.cached = None
+
+
 def transcode_for_upload(video: Path, out: Path, height: int = 384) -> Path:
     """Уменьшенная копия ролика для отправки на GPU-машину: мегабайты вместо десятков."""
     _run(
         [
             "ffmpeg", "-y", "-v", "error", "-i", str(video),
-            "-vf", f"scale=-2:{height}", "-c:v", "libx264", "-preset", "veryfast",
-            "-crf", "30", "-pix_fmt", "yuv420p", "-an", str(out),
+            "-vf", f"scale=-2:{height}", *_upload_encoder(),
+            "-pix_fmt", "yuv420p", "-an", str(out),
         ]
     )
     return out

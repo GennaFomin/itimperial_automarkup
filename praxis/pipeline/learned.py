@@ -77,6 +77,11 @@ class LearnedSegmenter:
     ) -> PipelineResult:
         if not config.TAS_BASE_URL:
             return self._fallback(video_path, meta, vocabulary, perception, "адрес сервиса не задан")
+        # Детектор обучен на признаках видеоэнкодера. Если те не получены и на входе
+        # запасные признаки серых блоков, звать его бессмысленно: он отвечает 500 на
+        # чужую размерность. Сразу берём ядровой метод — он работает на любых признаках.
+        if perception.degraded:
+            return self._fallback(video_path, meta, vocabulary, perception, "признаки просели")
         try:
             answer = post("/predict", {"samples": [encode(perception.appearance)]})
             scores = np.array(answer["scores"][0], dtype=np.float32)
