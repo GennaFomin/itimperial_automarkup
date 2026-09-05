@@ -7,7 +7,10 @@
 }
 /* Вписываем ролик целиком, сохраняя пропорции: обрезать кадр нельзя — стол и
    руки по краям и есть то, по чему человек ищет границу действия. */
-.stage__video { width: 100%; height: 100%; object-fit: contain; display: block; }
+/* Абсолютное позиционирование, а не проценты: в сетке с auto-строкой `height: 100%`
+   у <video> разрешался в собственную высоту ролика, кадр вылезал за рамку и
+   обрезался сверху и снизу — у 16:9 чуть-чуть, у 4:3 и вертикальных сильно. */
+.stage__video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
 
 .stage__missing {
   display: flex; flex-direction: column; align-items: center; gap: 10px;
