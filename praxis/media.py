@@ -133,6 +133,53 @@ def extract_frame(
     return out
 
 
+def window_frames(
+    video: Path,
+    start_sec: float,
+    end_sec: float,
+    out_dir: Path,
+    fps: float,
+    width: int = 640,
+    limit: int = 48,
+    crop: tuple[float, float, float, float] | None = None,
+) -> list[Path]:
+    """Кадры куска ролика с заданной частотой — одним вызовом ffmpeg.
+
+    Нужно для сплошной нарезки длинного шага: там кадров выходит втрое-вчетверо больше,
+    чем при выборке из пяти моментов, а покадровый вызов стоит около 320 мс на кадр —
+    это запуск процесса, а не декодирование. Здесь тот же приём, что в filmstrip.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    span = max(end_sec - start_sec, 1.0 / max(fps, 0.001))
+    filters = [f"fps={fps:g}"]
+    if crop:
+        left, top, span_x, span_y = crop
+        filters.append(f"crop=iw*{span_x:.4f}:ih*{span_y:.4f}:iw*{left:.4f}:ih*{top:.4f}")
+    filters.append(f"scale={width}:-2")
+    _run(
+        [
+            "ffmpeg",
+            "-y",
+            "-v",
+            "error",
+            "-ss",
+            f"{max(start_sec, 0.0):.3f}",
+            "-i",
+            str(video),
+            "-t",
+            f"{span:.3f}",
+            "-vf",
+            ",".join(filters),
+            "-frames:v",
+            str(limit),
+            "-q:v",
+            "3",
+            str(out_dir / "w_%03d.jpg"),
+        ]
+    )
+    return sorted(out_dir.glob("w_*.jpg"))
+
+
 def filmstrip(
     video: Path, duration_sec: float, out_dir: Path, count: int | None = None
 ) -> list[str]:

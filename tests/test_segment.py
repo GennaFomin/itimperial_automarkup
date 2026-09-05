@@ -129,3 +129,147 @@ def test_learned_segmenter_skips_the_detector_on_degraded_features(monkeypatch):
 
     assert result.models["segmenter"] == "tsm-kernel"
     assert "признаки просели" in result.models["segmenter_status"]
+
+
+def test_stack_motion_appends_one_channel():
+    import numpy as np
+
+    from praxis.pipeline.learned import stack_motion
+
+    appearance = np.zeros((7, 768), dtype=np.float32)
+    motion = np.linspace(0, 1, 7)
+    stacked = stack_motion(appearance, motion)
+    assert stacked.shape == (7, 769) and stacked.dtype == np.float32
+    assert np.allclose(stacked[:, -1], motion)
+
+
+def test_stack_motion_tolerates_length_mismatch():
+    """Полоса движения на кадр короче или длиннее — обрезаем/дополняем, а не падаем."""
+    import numpy as np
+
+    from praxis.pipeline.learned import stack_motion
+
+    appearance = np.zeros((7, 768), dtype=np.float32)
+    assert stack_motion(appearance, np.ones(9)).shape == (7, 769)
+    assert stack_motion(appearance, np.ones(5)).shape == (7, 769)
+
+
+def test_learned_segmenter_falls_back_on_dimension_mismatch(monkeypatch):
+    """Сервис ждёт другую размерность (чекпоинт без канала движения) → 400 → ядровой."""
+    import urllib.error
+
+    import numpy as np
+
+    from praxis import config
+    from praxis.pipeline import learned
+    from praxis.pipeline.base import Perception, get_segmenter
+    from praxis.schema import VideoMeta
+    from praxis.vocab import load_vocabulary
+
+    monkeypatch.setattr(config, "TAS_BASE_URL", "http://127.0.0.1:9")
+    monkeypatch.setattr(config, "MIN_SEGMENT_SEC", 0.5)
+    monkeypatch.setattr(config, "IDLE_RATIO", 0.0)
+
+    def refuse(path, payload, timeout=None):
+        import io
+        raise urllib.error.HTTPError(path, 400, "Bad Request", {}, io.BytesIO(
+            '{"detail": "детектор ждёт 768 признаков, получено 769"}'.encode()))
+
+    monkeypatch.setattr(learned, "post", refuse)
+    rng = np.random.default_rng(2)
+    features = np.vstack([rng.normal(size=(40, 64)), 5 + rng.normal(size=(40, 64))]).astype(np.float32)
+    perception = Perception(fps=8.0, motion=np.ones(80), appearance=features)
+    meta = VideoMeta(id="v", filename="v.mp4", duration_sec=10.0, fps=30.0, width=1280, height=720)
+
+    result = get_segmenter("learned-boundaries").run(Path("v.mp4"), meta, load_vocabulary(), perception)
+    assert result.models["segmenter"] == "tsm-kernel"
+    assert "768" in result.models["segmenter_status"]
+
+
+def test_difference_channels_add_two_per_lag():
+    import numpy as np
+
+    from praxis.pipeline.learned import difference_channels
+
+    matrix = np.random.default_rng(0).normal(size=(20, 8)).astype(np.float32)
+    out = difference_channels(matrix, lags=(1, 2, 4))
+    assert out.shape == (20, 8 + 6)
+    assert np.all(out[:, 8] >= 0)
+    assert np.all(np.abs(out[:, 9]) <= 1.0 + 1e-6)
+
+
+def test_difference_channels_flag_a_jump():
+    import numpy as np
+
+    from praxis.pipeline.learned import difference_channels
+
+    matrix = np.vstack([np.zeros((10, 4)), np.ones((10, 4))]).astype(np.float32)
+    out = difference_channels(matrix, lags=(1,))
+    assert out[10, 4] > out[5, 4] and out[10, 4] > out[15, 4]
+
+
+def test_prominence_ignores_ripples_on_a_plateau():
+    """Плато 0.8 с рябью — не граница: без выраженности каждый бугорок стал бы пиком.
+    Одиночный настоящий подъём над низким фоном остаётся."""
+    import numpy as np
+
+    from praxis.pipeline.learned import peaks_above
+
+    plateau = np.full(40, 0.8, dtype=np.float32)
+    plateau[10] += 0.02
+    plateau[30] += 0.02
+    assert len(peaks_above(plateau, level=0.5, minimum=3)) >= 2
+    assert peaks_above(plateau, level=0.5, minimum=3, prominence=0.2) == []
+
+    lone = np.full(40, 0.1, dtype=np.float32)
+    lone[20] = 0.9
+    assert peaks_above(lone, level=0.5, minimum=3, prominence=0.2) == [20]
+
+
+def test_activity_segments_keep_only_moving_parts_and_split_by_cuts():
+    from praxis.pipeline.learned import activity_segments
+
+    fps = 8.0
+    motion = np.zeros(80, dtype=np.float32)
+    motion[8:24] = 1.0   # действие 1–3 с
+    motion[40:64] = 1.0  # действие 5–8 с, внутри разрез детектора
+    scores = np.zeros(80, dtype=np.float32)
+    scores[52] = 0.9
+    segments = activity_segments(scores, motion, fps, 0.5, 4, 0.0, 0.5, 0.5, 0.0, 0.25)
+    assert segments == [(8, 24), (40, 52), (52, 64)]
+    # со сглаживанием 0.5 с края расползаются на полокна, разрезы остаются на месте
+    smoothed = activity_segments(scores, motion, fps, 0.5, 4, 0.0, 0.5, 0.5, 0.5, 0.25)
+    assert [s[0] for s in smoothed] == [8, 40, 52] and smoothed[0][1] in (24, 25, 26)
+
+
+def test_activity_segments_fall_back_to_full_coverage_without_a_motion_band():
+    from praxis.pipeline.learned import activity_segments
+
+    scores = np.zeros(40, dtype=np.float32)
+    scores[20] = 0.9
+    assert activity_segments(scores, np.zeros(0), 8.0, 0.5, 4, 0.0, 0.5, 0.5, 0.5, 0.25) == [(0, 20), (20, 40)]
+    assert activity_segments(scores, np.zeros(40), 8.0, 0.5, 4, 0.0, 0.5, 0.5, 0.5, 0.25) == [(0, 20), (20, 40)]
+
+
+def test_activity_segments_close_short_dips():
+    from praxis.pipeline.learned import activity_segments
+
+    motion = np.ones(40, dtype=np.float32)
+    motion[19:21] = 0.0  # провал 0.25 с внутри одного действия
+    segments = activity_segments(np.zeros(40, dtype=np.float32), motion, 8.0, 0.5, 4, 0.0, 0.5, 0.5, 0.0, 0.25)
+    assert segments == [(0, 40)]
+
+
+def test_learned_pause_curve_removes_transitions_from_steps():
+    from praxis.pipeline.learned import activity_segments
+
+    motion = np.ones(80, dtype=np.float32)  # движение есть везде: переход с движением
+    gaps = np.zeros(80, dtype=np.float32)
+    gaps[30:50] = 0.9  # детектор пауз: 2.5 с перехода
+    scores = np.zeros(80, dtype=np.float32)
+    segments = activity_segments(scores, motion, 8.0, 0.5, 4, 0.0, 0.15, 0.7, 0.0, 0.25, gaps, 0.5, 0.5)
+    assert segments == [(0, 30), (50, 80)]
+    # короткий всплеск паузы (0.25 с) не считается
+    gaps[:] = 0.0
+    gaps[10:12] = 0.9
+    assert activity_segments(scores, motion, 8.0, 0.5, 4, 0.0, 0.15, 0.7, 0.0, 0.25, gaps, 0.5, 0.5) == [(0, 80)]

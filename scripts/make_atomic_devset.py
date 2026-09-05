@@ -99,11 +99,19 @@ def allowed_labels(actions: list[dict], kept: list[dict], share: float = 0.5) ->
     return result
 
 
-def windows(actions: list[dict], span: float, min_steps: int, max_steps: int) -> list[list[dict]]:
+def windows(
+    actions: list[dict], span: float, min_steps: int, max_steps: int,
+    min_step_sec: float = 0.0, drop_verbs: tuple[str, ...] = (),
+) -> list[list[dict]]:
     """Окна фиксированной длины с подходящим числом атомарных действий внутри.
 
     Берём непересекающиеся окна: одна запись даёт несколько роликов, но кадры в них
     не повторяются, иначе набор сам себя дублирует.
+
+    min_step_sec и drop_verbs задают «чистый атомарный» режим: окно годится, только если
+    каждый шаг в нём не короче порога и в нём нет микроглаголов вроде attempt/inspect.
+    Так набор совпадает по гранулярности с кейсом (шаги 2–5 с), а не с разметкой по
+    каждой руке, где половина шагов короче секунды.
     """
     result, index = [], 0
     while index < len(actions):
@@ -111,7 +119,10 @@ def windows(actions: list[dict], span: float, min_steps: int, max_steps: int) ->
         chunk = [
             item for item in actions[index:] if item["end"] <= start + span and item["start"] >= start
         ]
-        if min_steps <= len(chunk) <= max_steps:
+        clean = all(item["end"] - item["start"] >= min_step_sec for item in chunk) and not any(
+            any(str(item.get("verb", "")).startswith(verb) for verb in drop_verbs) for item in chunk
+        )
+        if min_steps <= len(chunk) <= max_steps and clean:
             result.append(chunk)
             last = chunk[-1]["end"]
             while index < len(actions) and actions[index]["start"] < last:
@@ -158,6 +169,12 @@ def main() -> None:
     parser.add_argument("--max-steps", type=int, default=12)
     parser.add_argument("--per-video", type=int, default=2, help="сколько окон с одной записи")
     parser.add_argument("--view", default="C10095_rgb", help="экзоцентрическая камера")
+    parser.add_argument("--min-step-sec", type=float, default=0.0,
+                        help="чистый режим: каждый шаг в окне не короче")
+    parser.add_argument("--drop-verbs", default="",
+                        help="через запятую: окна с этими глаголами (по префиксу) пропускаются")
+    parser.add_argument("--download", action="store_true",
+                        help="скачивать запись файлом вместо потокового чтения ссылки")
     parser.add_argument(
         "--workers", type=int, default=6,
         help="сколько записей качать параллельно: узкое место — сеть, а не процессор",
@@ -180,11 +197,21 @@ def main() -> None:
         """Один исходник: вырезать окна и записать эталоны. Вызывается из пула потоков."""
         nonlocal written
         sequence = drop_overlaps(actions)
-        chunks = windows(sequence, args.span, args.min_steps, args.max_steps)[: args.per_video]
+        chunks = windows(
+            sequence, args.span, args.min_steps, args.max_steps,
+            args.min_step_sec, tuple(v for v in args.drop_verbs.split(",") if v),
+        )[: args.per_video]
         if not chunks:
             return
         try:
-            source = signed_url(f"recordings/{video}")
+            if args.download:
+                # Запись скачивается файлом, и окна режутся с диска. Потоковое чтение
+                # подписанной ссылки работает не на всякой сборке ffmpeg: на сервере она
+                # падала с SIGSEGV на каждом ролике. Локальный файл убирает сеть из
+                # ffmpeg целиком, а кэш huggingface_hub не даёт качать запись дважды.
+                source = str(fetch(f"recordings/{video}"))
+            else:
+                source = signed_url(f"recordings/{video}")
         except Exception as error:  # noqa: BLE001 — недоступная запись не рушит сборку
             print(f"  {video}: пропуск ({error})", flush=True)
             return

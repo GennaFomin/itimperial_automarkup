@@ -74,6 +74,31 @@ def _remote_embeddings(source: Path) -> np.ndarray | None:
 _FEATURE_FAILURE = {"reason": ""}
 
 
+def motion_band(source: Path, fps: float, count: int) -> np.ndarray:
+    """Полоса движения на сетке признаков — 769-й канал детектора границ.
+
+    Считается из серых кадров, это самое дорогое в обучении (декодирование всего
+    ролика), поэтому кладётся в кэш рядом с признаками и под тем же ключом.
+    """
+    # Ключ — только сам файл: полоса движения не зависит от энкодера, и при сравнении
+    # энкодеров её незачем пересчитывать под каждый.
+    stamp = f"{source.resolve()}|{source.stat().st_size}|{config.MOTION_FPS}"
+    cache = config.WORK_DIR / "motion" / f"{hashlib.sha1(stamp.encode()).hexdigest()[:16]}.npy"
+    if config.FEATURE_CACHE and cache.exists():
+        band = np.load(cache)
+        if len(band) == count:
+            return band.astype(np.float32)
+    frames = media.gray_frames(source)
+    raw = media.motion_from_frames(frames)
+    band = _resample(np.asarray(raw, dtype=np.float32), float(config.MOTION_FPS), fps, count)
+    peak = float(band.max()) if len(band) else 0.0
+    band = (band / peak).astype(np.float32) if peak > 0 else band.astype(np.float32)
+    if config.FEATURE_CACHE:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        np.save(cache, band)
+    return band
+
+
 def _feature_cache_path(source: Path) -> Path:
     """Ключ кэша: сам файл плюс всё, что влияет на признаки.
 
@@ -90,7 +115,7 @@ def _feature_cache_path(source: Path) -> Path:
     return config.WORK_DIR / "features" / f"{digest}.npz"
 
 
-def _video_features(source: Path) -> dict | None:
+def video_features(source: Path) -> dict | None:
     """Признаки окон кадров с видеоэнкодера: они видят движение, а не только содержимое.
 
     Результат кладётся в кэш на диск: подбор параметров нарезки перегоняет один и тот же
@@ -184,7 +209,7 @@ def perceive(source: Path) -> Perception:
         config.FEATURES == "embed" and config.CLIP_BASE_URL
     )
 
-    video = _video_features(source)
+    video = video_features(source)
     if video is not None:
         appearance = video["matrix"]
         motion = _resample(motion, config.MOTION_FPS, video["fps"], len(appearance))
