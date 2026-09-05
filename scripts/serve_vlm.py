@@ -62,12 +62,22 @@ OPEN_PROMPT = """Кадры идут по порядку и показывают
 Назови, что человек или робот сделал за этот фрагмент. Списка допустимых ответов нет —
 пиши своими словами, но коротко и однообразно, {language}:
 
-* действие — один глагол («поднял», «повернул», «положил» / "pick up", "rotate", "put down");
+* действие — глагол в начальной форме, одно-два слова ("pick up", "rotate", "put down");
 * предмет — одно-два слова, тот объект, с которым действие произведено.
 
 Сравни, что было в начале и что стало в конце: важно изменение, а не то, что человек
 держит в руках в середине.
-Если по кадрам понять нельзя — верни "unknown" вместо выдумки.
+
+Отвечай КОНКРЕТНО. Слова вроде "adjust", "manipulate", "handle", "touch", "interact",
+"move" ничего не сообщают о том, что произошло, — они запрещены. Если рука с инструментом
+у крепежа, реши, закручивают его или откручивают. Если предмет сменил место, реши, его
+подняли, перенесли или отложили. Если предмет отделили от целого — так и скажи.
+И только если по кадрам действительно не разобрать — верни "unknown", это честнее заглушки.
+
+Примеры нужной формы ответа:
+{{"action": "pick up", "object": "bottle", "confidence": 0.8}}
+{{"action": "unscrew", "object": "wheel", "confidence": 0.6}}
+{{"action": "open", "object": "drawer", "confidence": 0.9}}
 
 Ответь ровно двумя строками. Первая — короткое наблюдение, что изменилось. Вторая — JSON:
 {{"action": "<глагол>", "object": "<предмет>", "confidence": <0..1>}}"""
@@ -86,6 +96,12 @@ BATCH_SIZE = 4
 # двадцать — помещаются и дают именование на 20 % быстрее, чем двенадцать (60 с против
 # 71–77 на ролике из 16 шагов).
 MAX_IMAGES = int(os.getenv("PRAXIS_VLM_MAX_IMAGES", "20"))
+
+# Сколько токенов модель может потратить на ответ. Ста шестидесяти хватает на две строки,
+# но рассуждающие модели (GLM-4.1V-Thinking, Qwen3-VL-Thinking) сначала пишут ход мысли в
+# <think>…</think> и на таком бюджете обрываются, не дойдя до JSON: замер показывал
+# «unknown» во всех 87 шагах. Для них бюджет поднимается переменной.
+MAX_NEW_TOKENS = int(os.getenv("PRAXIS_VLM_MAX_NEW_TOKENS", "160"))
 
 # Сколько кандидатов оценивать за один проход при скоринге.
 SCORE_BATCH = 8
@@ -112,6 +128,12 @@ JOINT_PROMPT = """Кадры показывают один ролик, разб�
 class Segment(BaseModel):
     id: int
     frames: list[str]  # JPEG в base64
+    # Настоящая частота, с которой нарезаны кадры этого шага. У длинного шага она ниже:
+    # потолок кадров один на всех, а длина шага разная. Из неё строятся отметки времени.
+    fps: float | None = None
+    # Места кадров на временной сетке шага. Последовательность бывает неравномерной: часть
+    # кадров отсеяна как повтор предыдущего, и подряд идущие номера соврали бы про время.
+    frame_indices: list[int] | None = None
     # Короткий список гипотез для режима скоринга: [[действие, предмет], ...].
     candidates: list[list[str]] | None = None
     # Что модель сказала про соседние шаги на первом проходе.
@@ -123,6 +145,14 @@ class Segment(BaseModel):
 
 
 class Request(BaseModel):
+    # Отдавать кадры шага видеотрактом, а не пачкой независимых картинок. Разница не в
+    # упаковке: видеопроцессор склеивает соседние кадры во временные патчи по два и сам
+    # врезает в промпт отметки «<0.5 seconds>». То есть модель видит движение между
+    # кадрами, а не набор стоп-кадров, — а именно этого не хватало на глаголах состояния.
+    video_mode: bool = False
+    # Кадры пришли с красным овалом вокруг рабочей зоны. Про отметку нужно сказать в
+    # промпте: без объяснения модель считает её частью сцены и описывает сам овал.
+    marked: bool = False
     # Подписывать ли кадры их позицией во времени: проверяется замером, поэтому флаг.
     frame_labels: bool = True
     # "both" — спросить сразу пару; "object" — только предмет (первая ступень).
@@ -191,6 +221,12 @@ def load(model_id: str, device: str) -> None:
         model_id, dtype=torch.bfloat16, device_map=device
     ).eval()
     state["model_id"] = model_id
+    # Видеотракт написан под процессор Qwen3-VL: только он принимает метаданные ролика,
+    # сам врезает отметки времени и склеивает кадры во временные патчи. У других семейств
+    # интерфейс другой, поэтому им кадры уходят пачкой картинок — а не падает запрос.
+    state["video_ok"] = "Qwen3VL" in type(state["processor"]).__name__
+    if not state["video_ok"]:
+        print("видеотракт недоступен для этого процессора — кадры пойдут картинками", flush=True)
     print(f"готово за {time.perf_counter() - started:.1f} с", flush=True)
 
 
@@ -234,8 +270,17 @@ def parse_nested(text: str) -> dict:
         return {}
 
 
+def strip_thinking(text: str) -> str:
+    """Убрать ход мысли рассуждающей модели: ответ идёт после закрывающего тега."""
+    if "</think>" in text:
+        return text.rsplit("</think>", 1)[1]
+    return text
+
+
 def parse(text: str) -> dict:
-    matches = re.findall(r"\{[^{}]*\}", text, re.DOTALL)
+    # Ход мысли отбрасывается: внутри <think> модель перебирает варианты, и найденный там
+    # JSON был бы черновиком, а не ответом.
+    matches = re.findall(r"\{[^{}]*\}", strip_thinking(text), re.DOTALL)
     for candidate in reversed(matches):
         try:
             return json.loads(candidate)
@@ -370,6 +415,76 @@ def _joint(request: Request) -> list[dict]:
     return answers
 
 
+def _annotate_video(request: Request, build_prompt) -> dict:
+    """Тот же вопрос, но кадры шага уходят как видео, а не как пачка картинок.
+
+    Видеопроцессор Qwen3-VL склеивает соседние кадры во временные патчи по два и сам
+    врезает перед каждым патчем отметку «<0.5 seconds>». Подписи кадров текстом здесь не
+    нужны — время уже внутри представления.
+
+    Батч по одному сегменту: у видео на проход приходится больше зрительных токенов, чем у
+    той же пачки картинок, и группировать их на 24 ГБ рискованно.
+    """
+    from transformers.video_utils import VideoMetadata
+
+    model, processor = state["model"], state["processor"]
+    started = time.perf_counter()
+    answers: list[str] = []
+
+    for segment in request.segments:
+        frames = [decode(frame) for frame in segment.frames]
+        fps = segment.fps or 2.0
+        # Отметку времени процессор считает как номер кадра на сетке, делённый на частоту.
+        # Если часть кадров выброшена как повтор, номера приходят от клиента: иначе шаг с
+        # выброшенной серединой выглядел бы вдвое короче, чем он есть.
+        indices = segment.frame_indices or list(range(len(frames)))
+        if len(indices) != len(frames):
+            indices = list(range(len(frames)))
+        metadata = VideoMetadata(
+            total_num_frames=indices[-1] + 1 if indices else 0,
+            fps=fps,
+            duration=(indices[-1] + 1) / fps if indices else 0.0,
+            video_backend="pil",
+            frames_indices=indices,
+        )
+        messages = [
+            {
+                "role": "user",
+                "content": [{"type": "video"}, {"type": "text", "text": build_prompt(segment)}],
+            }
+        ]
+        text = processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+        inputs = processor(
+            text=[text],
+            videos=[frames],
+            video_metadata=[metadata],
+            cap_pixels_per_frame=True,
+            # Выборку кадров делаем мы, а не процессор. По умолчанию он прореживает
+            # поданное до собственных двух кадров в секунду, ориентируясь на заявленную
+            # частоту: шаг, нарезанный на восьми кадрах при 4 к/с, дошёл бы до модели
+            # четырьмя. Мы уже отобрали ровно то, что хотим показать.
+            do_sample_frames=False,
+            return_tensors="pt",
+        ).to(model.device)
+        with torch.inference_mode():
+            generated = model.generate(**inputs, max_new_tokens=MAX_NEW_TOKENS, do_sample=False)
+        answers.append(
+            processor.batch_decode(
+                generated[:, inputs["input_ids"].shape[1] :], skip_special_tokens=True
+            )[0]
+        )
+
+    results = [
+        _apply(segment, parse(text), request, text)
+        for segment, text in zip(request.segments, answers)
+    ]
+    return {
+        "results": results,
+        "model": state["model_id"] + " (video)",
+        "elapsed_sec": round(time.perf_counter() - started, 2),
+    }
+
+
 @app.post("/annotate")
 def annotate(request: Request) -> dict:
     model, processor = state["model"], state["processor"]
@@ -385,6 +500,12 @@ def annotate(request: Request) -> dict:
             lines.append(
                 "Учти порядок: взятый предмет потом куда-то кладут, открытое потом закрывают,"
                 " и два соседних шага обычно разные."
+            )
+        if request.marked:
+            lines.append(
+                "Красным овалом на кадрах отмечена рабочая зона — руки и то, с чем они"
+                " работают. Отвечай про предмет внутри овала, а сам овал не описывай:"
+                " это наша пометка, а не часть сцены."
             )
         if request.open_vocabulary:
             return OPEN_PROMPT.format(
@@ -465,6 +586,9 @@ def annotate(request: Request) -> dict:
             "elapsed_sec": round(time.perf_counter() - started, 2),
         }
 
+    if request.video_mode and state.get("video_ok"):
+        return _annotate_video(request, build_prompt)
+
     texts, image_groups = [], []
     for segment in request.segments:
         images = [decode(frame) for frame in segment.frames]
@@ -507,7 +631,7 @@ def annotate(request: Request) -> dict:
             text=chunk_texts, images=chunk_images, padding=True, return_tensors="pt"
         ).to(model.device)
         with torch.inference_mode():
-            generated = model.generate(**inputs, max_new_tokens=160, do_sample=False)
+            generated = model.generate(**inputs, max_new_tokens=MAX_NEW_TOKENS, do_sample=False)
         answers.extend(
             processor.batch_decode(
                 generated[:, inputs["input_ids"].shape[1] :], skip_special_tokens=True
