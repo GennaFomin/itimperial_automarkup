@@ -1,0 +1,52 @@
+# Варианты детектора, порог 0.5
+
+| вариант | набор | F1@0.5 | 90 % | ошибка границ | шагов |
+| --- | --- | --- | --- | --- | --- |
+| base | old/assembly101-coarse | 0.171 | 0.107–0.232 | 1.41 с | 8.2 |
+| base | old/assembly101-fine | 0.387 | 0.311–0.458 | 0.49 с | 7.3 |
+| base | old/charades | 0.171 | 0.101–0.243 | 1.20 с | 9.8 |
+| base | old/epic-kitchens | 0.456 | 0.167–0.678 | 0.36 с | 4.8 |
+| base | clean | 0.380 | 0.250–0.570 | 0.93 с | 7.2 |
+| base | robot | 0.050 | 0.017–0.100 | 2.06 с | 11.1 |
+| sigma1 | old/assembly101-coarse | 0.546 | 0.372–0.709 | 1.92 с | 5.1 |
+| sigma1 | old/assembly101-fine | 0.395 | 0.283–0.514 | 0.48 с | 5.5 |
+| sigma1 | old/charades | 0.159 | 0.059–0.259 | 1.36 с | 3.9 |
+| sigma1 | old/epic-kitchens | 0.432 | 0.182–0.645 | 0.31 с | 5.0 |
+| sigma1 | clean | 0.602 | 0.385–0.792 | 0.60 с | 5.2 |
+| sigma1 | robot | 0.718 | 0.645–0.794 | 2.70 с | 3.1 |
+| s2-sigma1 | old/assembly101-coarse | 0.234 | 0.213–0.255 | 1.97 с | 6.6 |
+| s2-sigma1 | old/assembly101-fine | 0.402 | 0.299–0.503 | 0.42 с | 7.1 |
+| s2-sigma1 | old/charades | 0.228 | 0.128–0.328 | 0.91 с | 6.1 |
+| s2-sigma1 | old/epic-kitchens | 0.536 | 0.369–0.682 | 0.44 с | 5.2 |
+| s2-sigma1 | clean | 0.437 | 0.251–0.628 | 0.58 с | 5.3 |
+| s2-sigma1 | robot | 0.473 | 0.405–0.539 | 2.02 с | 5.8 |
+| s2-motiondiff | old/assembly101-coarse | 0.218 | 0.099–0.343 | 1.40 с | 7.2 |
+| s2-motiondiff | old/assembly101-fine | 0.349 | 0.233–0.454 | 0.56 с | 6.4 |
+| s2-motiondiff | old/charades | 0.244 | 0.149–0.333 | 1.01 с | 4.0 |
+| s2-motiondiff | old/epic-kitchens | 0.507 | 0.347–0.687 | 0.37 с | 5.5 |
+| s2-motiondiff | clean | 0.591 | 0.412–0.767 | 0.72 с | 6.0 |
+| s2-motiondiff | robot | 0.454 | 0.362–0.554 | 1.89 с | 4.9 |
+| s2-plain-sigma1 | old/assembly101-coarse | 0.278 | 0.184–0.384 | 2.13 с | 6.6 |
+| s2-plain-sigma1 | old/assembly101-fine | 0.393 | 0.303–0.477 | 0.49 с | 6.6 |
+| s2-plain-sigma1 | old/charades | 0.149 | 0.064–0.243 | 0.82 с | 3.4 |
+| s2-plain-sigma1 | old/epic-kitchens | 0.604 | 0.375–0.834 | 0.42 с | 5.0 |
+| s2-plain-sigma1 | clean | 0.587 | 0.496–0.681 | 0.90 с | 5.0 |
+| s2-plain-sigma1 | robot | 0.557 | 0.416–0.696 | 2.50 с | 3.6 |
+| s2-sigma1+s2-sigma1-b+s2-sigma1-c | old/assembly101-coarse | 0.324 | 0.212–0.435 | 1.68 с | 6.6 |
+| s2-sigma1+s2-sigma1-b+s2-sigma1-c | old/assembly101-fine | 0.400 | 0.309–0.485 | 0.44 с | 6.6 |
+| s2-sigma1+s2-sigma1-b+s2-sigma1-c | old/charades | 0.318 | 0.176–0.467 | 1.25 с | 3.6 |
+| s2-sigma1+s2-sigma1-b+s2-sigma1-c | old/epic-kitchens | 0.480 | 0.347–0.613 | 0.42 с | 5.2 |
+| s2-sigma1+s2-sigma1-b+s2-sigma1-c | clean | 0.456 | 0.299–0.613 | 0.56 с | 6.0 |
+| s2-sigma1+s2-sigma1-b+s2-sigma1-c | robot | 0.684 | 0.611–0.763 | 1.98 с | 3.8 |
+| sigma1+s2-sigma1 | old/assembly101-coarse | 0.466 | 0.285–0.639 | 1.72 с | 5.1 |
+| sigma1+s2-sigma1 | old/assembly101-fine | 0.396 | 0.264–0.527 | 0.42 с | 5.5 |
+| sigma1+s2-sigma1 | old/charades | 0.199 | 0.081–0.324 | 1.28 с | 3.4 |
+| sigma1+s2-sigma1 | old/epic-kitchens | 0.519 | 0.369–0.663 | 0.46 с | 5.5 |
+| sigma1+s2-sigma1 | clean | 0.518 | 0.312–0.708 | 0.61 с | 4.8 |
+| sigma1+s2-sigma1 | robot | 0.770 | 0.667–0.880 | 2.32 с | 3.2 |
+| base+s2-plain-sigma1 | old/assembly101-coarse | 0.287 | 0.234–0.366 | 1.88 с | 6.0 |
+| base+s2-plain-sigma1 | old/assembly101-fine | 0.350 | 0.275–0.420 | 0.46 с | 6.1 |
+| base+s2-plain-sigma1 | old/charades | 0.255 | 0.146–0.363 | 0.85 с | 3.9 |
+| base+s2-plain-sigma1 | old/epic-kitchens | 0.522 | 0.321–0.700 | 0.35 с | 4.8 |
+| base+s2-plain-sigma1 | clean | 0.526 | 0.398–0.648 | 0.79 с | 4.8 |
+| base+s2-plain-sigma1 | robot | 0.408 | 0.294–0.531 | 2.00 с | 5.1 |
