@@ -114,7 +114,7 @@ def _feature_cache_path(source: Path) -> Path:
     return config.WORK_DIR / "features" / f"{digest}.npz"
 
 
-def _video_features(source: Path) -> dict | None:
+def video_features(source: Path) -> dict | None:
     """Признаки окон кадров с видеоэнкодера: они видят движение, а не только содержимое.
 
     Результат кладётся в кэш на диск: подбор параметров нарезки перегоняет один и тот же
@@ -208,7 +208,7 @@ def perceive(source: Path) -> Perception:
         config.FEATURES == "embed" and config.CLIP_BASE_URL
     )
 
-    video = _video_features(source)
+    video = video_features(source)
     if video is not None:
         appearance = video["matrix"]
         motion = _resample(motion, config.MOTION_FPS, video["fps"], len(appearance))
