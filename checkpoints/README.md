@@ -1,17 +1,28 @@
 # Веса детектора границ
 
-`boundary.pt` — обученная голова детектора границ действий (MS-TCN, 2 стадии, вход
-768 признаков TimeSformer-K400, обучена на 203 роликах Assembly101 fine-grained). Это
-модель, которая стоит на демо и даёт F1@0.5 = 0.41 без сверки меток на 85 атомарных
-роликах; ошибка границ ≈ 0.4 с.
+`boundary.pt` — упакованный ансамбль из двух MS-TCN (2 стадии, вход 768 = TimeSformer-K400,
+окно 16 кадров при 32 fps = 0.5 с, шаг 4 кадра = 8 Гц, без каналов движения и разностей).
+Сервис читает поле `members` и усредняет вероятности границ по кадрам; для старого
+сервиса файл выглядит как одиночная модель (первый участник). Участники лежат в
+`members/`, собрать заново:
 
-Как поднять сервис (на машине с GPU, из корня репозитория):
+    python scripts/pack_ensemble.py checkpoints/members/boundary-fine604-win05-s2.pt \
+        checkpoints/members/boundary-fine604-robot60-win05-s2.pt --out checkpoints/boundary.pt
 
-```bash
-CUDA_VISIBLE_DEVICES=0 python scripts/serve_tas.py --port 8104 --checkpoint checkpoints/boundary.pt
-curl http://127.0.0.1:8104/health   # {"ready":true,...,"dim":768,"stages":2}
-```
+| участник | корпус | σ |
+| --- | --- | --- |
+| fine604-win05-s2 | train_atomic ∪ asm_extra — 554 ролика Assembly101 fine-grained | 2 кадра (±0.25 с) |
+| fine604-robot60-win05-s2 | те же 554 + 60 эпизодов LIBERO с подзадачами | 2 кадра (±0.25 с) |
 
-Приложение указывает на него через `PRAXIS_TAS_BASE_URL=http://127.0.0.1:8104` (см.
-`.env.example`, `docs/PIPELINE.md`). Файл 1.7 МБ, формат `torch.save`: словарь с
-`dim`, `weights` и, для новых версий, `stages`.
+Замеры (F1@0.5, декодер приложения: пики выше 0.7, интервал 0.5 с) — в
+`experiments/results/2026-09-05-boundary-final.md`: 85 атомарных роликов 0.498 (одиночная
+модель в main до этого — 0.422), EPIC 0.535 (0.413), робот 0.733 (0.096).
+
+Запуск сервиса:
+
+    python scripts/serve_tas.py --port 8104 --checkpoint checkpoints/boundary.pt
+
+`/health` должен показать `"dim": 768, "stages": 2, "members": 2`. Клиент извлекает
+признаки с `PRAXIS_VIDEO_FPS=32`, `PRAXIS_VIDEO_WINDOW=16`, `PRAXIS_VIDEO_STRIDE=4` и шлёт
+768 признаков (`PRAXIS_TAS_MOTION=0`, `PRAXIS_TAS_DIFF=0`); порог `PRAXIS_TAS_THRESHOLD=0.7`,
+интервал `PRAXIS_MIN_SEGMENT_SEC=0.5` — всё это умолчания `praxis/config.py`.
