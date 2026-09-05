@@ -149,10 +149,11 @@ TAS_BASE_URL = os.getenv("PRAXIS_TAS_BASE_URL", "")
 ENSEMBLE_TOLERANCE_SEC = float(os.getenv("PRAXIS_ENSEMBLE_TOLERANCE_SEC", "0.5"))
 ENSEMBLE_CONFIRM = float(os.getenv("PRAXIS_ENSEMBLE_CONFIRM", "0.3"))
 ENSEMBLE_STRONG = float(os.getenv("PRAXIS_ENSEMBLE_STRONG", "0.9"))
-# Порог пика для отгружаемого ансамбля (два участника, признаки 8 Гц): 0.7 против 0.5 —
-# 0.498 против 0.486 на 85 атомарных роликах, 0.535 против 0.498 на EPIC, 0.733 против
-# 0.713 на роботе. Ансамблю из многих участников порог нужен ниже — усреднение сглаживает.
-TAS_THRESHOLD = float(os.getenv("PRAXIS_TAS_THRESHOLD", "0.7"))
+# Порог пика для отгружаемого ансамбля-консенсуса (минимум по двум fine-моделям, 8 Гц):
+# результат почти не зависит от порога в 0.3–0.7 (0.497–0.503 на 85 атомарных роликах),
+# 0.5 берёт больше реальных смен на бытовых роликах вне обучающего домена, где кривая
+# ниже, чем на Assembly101. См. experiments/results/2026-09-05-boundary-final.md.
+TAS_THRESHOLD = float(os.getenv("PRAXIS_TAS_THRESHOLD", "0.5"))
 # Полоса движения как 769-й канал детектора. Одинакова для руки человека и
 # манипулятора — граница это событие захвата, а не внешний вид.
 TAS_MOTION = os.getenv("PRAXIS_TAS_MOTION", "0").lower() not in {"0", "false", "no"}

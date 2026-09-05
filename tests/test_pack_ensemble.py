@@ -62,3 +62,18 @@ def test_legacy_two_stage_member_is_renamed_and_loads(tmp_path):
     features = torch.randn(1, 8, 20)
     with torch.no_grad():
         assert torch.allclose(serve_tas.state["model"](features)[-1], legacy(features)[-1])
+
+
+def test_min_fusion_cuts_only_where_every_member_agrees(tmp_path):
+    a = save(tmp_path / "boundary-a.pt", 8, 2, 5)
+    b = save(tmp_path / "boundary-b.pt", 8, 2, 6)
+    torch.save(pack([tmp_path / "boundary-a.pt", tmp_path / "boundary-b.pt"], fusion="min"), tmp_path / "boundary.pt")
+    load_checkpoint(tmp_path / "boundary.pt", "cpu")
+    assert serve_tas.state["fusion"] == "min"
+    features = torch.randn(1, 8, 25)
+    with torch.no_grad():
+        expected = torch.stack([torch.sigmoid(m(features)[-1])[0, 0] for m in (a, b)]).min(0).values
+        members = [serve_tas.state["model"], *serve_tas.state["ensemble"]]
+        stacked = torch.stack([torch.sigmoid(m(features)[-1])[0, 0] for m in members])
+        got = stacked.min(0).values if serve_tas.state["fusion"] == "min" else stacked.mean(0)
+    assert torch.allclose(got, expected)

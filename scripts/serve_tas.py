@@ -217,6 +217,9 @@ def load_checkpoint(path: Path, device: str) -> None:
         net.load_state_dict(member["weights"])
         members.append(net.eval())
     state["ensemble"] = members
+    # Как сливать участников: "mean" — среднее вероятностей, "min" — согласие всех
+    # (разрез только там, где каждый участник видит смену). Задаётся при упаковке.
+    state["fusion"] = str(payload.get("fusion", "mean"))
 
 
 @app.post("/load")
@@ -244,7 +247,8 @@ def load(request: LoadRequest) -> dict:
 def health() -> dict:
     return {"ready": "model" in state, "model": "boundary-net", "dim": state.get("dim"),
             "stages": state.get("stages"), "checkpoint": state.get("loaded"),
-            "members": 1 + len(state.get("ensemble", [])) if "model" in state else 0}
+            "members": 1 + len(state.get("ensemble", [])) if "model" in state else 0,
+            "fusion": state.get("fusion", "mean")}
 
 
 @app.post("/train")
@@ -331,9 +335,10 @@ def predict(request: PredictRequest) -> dict:
             pooled, _ = temporal_pool(features, torch.zeros(len(features)), window)
             with torch.no_grad():
                 members = [model, *state.get("ensemble", [])]
-                score = torch.stack([
+                stacked = torch.stack([
                     torch.sigmoid(m(pooled.T.to(device).unsqueeze(0))[-1])[0, 0].cpu() for m in members
-                ]).mean(0)
+                ])
+                score = stacked.min(0).values if state.get("fusion") == "min" else stacked.mean(0)
             score = score.repeat_interleave(window)[: len(features)]
             if len(score) < len(features):
                 score = torch.nn.functional.pad(score, (0, len(features) - len(score)), value=float(score[-1]))

@@ -48,7 +48,7 @@
 
 Praxis is a **video annotation assistant** for the AI Product Hack 2026 case by IT Imperial: short clips of a person or a robot manipulating objects have to be turned into a list of steps — *picked up the bottle, rotated it, put it down* — that can later feed robotics datasets. The app produces the whole draft on its own; a reviewer **checks and corrects** instead of annotating from scratch.
 
-The pipeline has one central design decision, earned the hard way: **the language model never touches time.** Step boundaries come from a class-free, learned **boundary detector** on video features (an ensemble of two MS-TCN heads over TimeSformer features at 8 Hz); the vision-language model only *names* segments that are already cut, with no class list, in open vocabulary. Every fallback the system takes — a service down, a clip too short — is reported in `warnings`, never hidden behind a green status.
+The pipeline has one central design decision, earned the hard way: **the language model never touches time.** Step boundaries come from a class-free, learned **boundary detector** on video features (a consensus of two MS-TCN heads over TimeSformer features at 8 Hz); the vision-language model only *names* segments that are already cut, with no class list, in open vocabulary. Every fallback the system takes — a service down, a clip too short — is reported in `warnings`, never hidden behind a green status.
 
 > **Why a separate detector?** The case scores steps one-to-one at IoU ≥ 0.5 with a boundary error under 2 s. Asking a VLM for timecodes over-segments and costs 25–60 s per clip; the detector places boundaries in 0.4 s and infers the number of steps itself. The comparison, with numbers, is in [experiments/research/BOUNDARIES.md](experiments/research/BOUNDARIES.md).
 
@@ -82,7 +82,7 @@ cd web && npm install && npm run build && cd ..
 | boundary detector, shipped ensemble | 8104 | `python scripts/serve_tas.py --port 8104 --checkpoint checkpoints/boundary.pt` |
 | naming, Qwen3-VL-8B | 8100 | `python scripts/serve_vlm.py --port 8100 --model Qwen/Qwen3-VL-8B-Instruct` |
 
-Point the app at them with `PRAXIS_VIDEO_BASE_URL`, `PRAXIS_TAS_BASE_URL`, `PRAXIS_VLM_BASE_URL` (see `.env.example` for the SSH-tunnel variant and [docs/PIPELINE.md](docs/PIPELINE.md) for every setting). `/health` of the detector must report `"dim": 768, "members": 2`. Without the services the app still runs — boundaries fall back to kernel change-point, features to grey blocks, steps arrive unlabelled — and says so in `warnings`.
+Point the app at them with `PRAXIS_VIDEO_BASE_URL`, `PRAXIS_TAS_BASE_URL`, `PRAXIS_VLM_BASE_URL` (see `.env.example` for the SSH-tunnel variant and [docs/PIPELINE.md](docs/PIPELINE.md) for every setting). `/health` of the detector must report `"dim": 768, "members": 2, "fusion": "min"`. Without the services the app still runs — boundaries fall back to kernel change-point, features to grey blocks, steps arrive unlabelled — and says so in `warnings`.
 
 ### 4. One clip end to end
 
@@ -121,7 +121,7 @@ flowchart LR
 | --- | --- | --- |
 | frames | ffmpeg, 32 fps, 256 px | one pass gives both the encoder input and the motion band for the timeline |
 | features | TimeSformer-K400, 16-frame window (0.5 s), stride 4 (8 Hz), cached on disk | Kinetics-supervised features beat self-supervised ones on temporal tasks; the short window is what makes sub-second steps visible |
-| boundaries | ensemble of two MS-TCN heads, one logit per frame, peaks above 0.7 at least 0.5 s apart | class-agnostic by construction — trained on timecodes only — so it transfers to any domain |
+| boundaries | consensus of two MS-TCN heads (minimum of their per-frame probabilities), peaks above 0.5 at least 0.5 s apart | class-agnostic by construction — trained on timecodes only — so it transfers to any domain |
 | labels | Qwen3-VL-8B, 5 frames + before/after context, open vocabulary | no class list exists in advance, so the answer is generated, not picked |
 | validation | pydantic schema and invariants | no overlaps, keyframe inside its step, everything inside the duration |
 | export | the case owner's contract, integer milliseconds | `schema_version`, `model_version`, latency, cost, artifacts |
@@ -141,8 +141,8 @@ The detector is the part of the pipeline the case metric depends on most, and th
 | --- | --- |
 | **Model** | MS-TCN (Farha & Gall, 2019): 2 stages × 10 dilated residual layers, 64 filters, per-stage loss, smoothing loss. One logit per frame — *did the action change here* — instead of a class softmax, so no taxonomy is ever learned. |
 | **Input** | TimeSformer-K400 features, 768-d, 16-frame window at 32 fps (0.5 s), stride 4 (8 Hz). No motion or difference channels: measured, no gain. |
-| **Ensemble** | two checkpoints averaged frame by frame and packed into one file, [checkpoints/boundary.pt](checkpoints/README.md): one trained on 554 Assembly101 fine-grained clips, one on the same clips plus 60 LIBERO robot episodes. |
-| **Decoder** | local maxima of the averaged probability above 0.7, at least 0.5 s apart; segments between cuts become steps. |
+| **Ensemble** | two checkpoints packed into one file, [checkpoints/boundary.pt](checkpoints/README.md), fused by *consensus*: the per-frame minimum of their probabilities, so a cut needs both models to see a change. Trained on 554 and 203 Assembly101 fine-grained clips respectively. |
+| **Decoder** | local maxima of the fused probability above 0.5, at least 0.5 s apart; segments between cuts become steps. |
 | **Training signal** | step start and end timecodes only, from public datasets (Assembly101, LIBERO). No manual annotation, no class labels. |
 
 ### How it was chosen
@@ -150,7 +150,7 @@ The detector is the part of the pipeline the case metric depends on most, and th
 1. **Class-free head over a frozen video encoder** — the case has no class list, and a boundary is the same event in any domain ([research](experiments/research/BOUNDARIES.md)).
 2. **Architecture ablation is flat on the target regime.** 2 vs 4 stages, boundary width σ, motion channels, C2F augmentation, test-time augmentation, three seeds and three times more data all land within ±0.01 on 85 atomic clips whose recording sessions never appear in training ([ranking](experiments/results/2026-09-05-ranking85.md), [stages](experiments/results/2026-09-05-stages-variants.md)).
 3. **What is *not* flat: the feature time resolution.** Halving the encoder window to 0.5 s at 8 Hz sharpens the peaks enough for a 0.5 s interval between cuts, which is where the short steps live: +0.05 for the same model and corpus ([final report](experiments/results/2026-09-05-boundary-final.md)).
-4. **The ensemble buys robustness, not points.** On its own regime it adds +0.01–0.03; outside it — EPIC-Kitchens, robot renders — a single fine-grained model over-segments a robot into twenty pieces, while members that saw 60 robot episodes keep both regimes ([cross-embodiment](experiments/results/2026-09-05-cross-embodiment.md)).
+4. **Consensus instead of averaging.** The minimum of two models' probabilities keeps only the changes both see: on the atomic set it scores 0.497–0.503 at *any* threshold from 0.3 to 0.7, which is what makes it safe for an unknown domain, and on hand-filmed desk clips outside the training data it finds 8–9 steps per 30 s clip where an averaged robot-aware pair found 3–6 ([final report](experiments/results/2026-09-05-boundary-final.md)). A member trained with robot episodes suppresses the robot's micro-motions but also the real actions in unfamiliar human clips, so it is not shipped ([cross-embodiment](experiments/results/2026-09-05-cross-embodiment.md)).
 5. **Decoding was swept offline** over dumped probabilities — threshold, interval, prominence, penalised DP — so every number above uses the decoder the application actually runs ([decoders](experiments/results/2026-09-05-decoders-base.md)).
 
 ### Reproduce a number
@@ -180,22 +180,22 @@ Boundary detector, application decoder, no labels involved:
 
 | metric | atomic | mid | robot | what it means |
 | --- | --- | --- | --- | --- |
-| step-F1 @ IoU 0.5 — the case rule | **0.498** | **0.535** | **0.733** | one-to-one matching of steps at IoU ≥ 0.5; the single model shipped before scored 0.422 / 0.413 / 0.096 |
-| step-F1 @ IoU 0.25 | 0.714 | 0.718 | 0.733 | the same with looser overlap |
-| boundary precision, ±2 s | **0.90** | 0.74 | — | share of our cuts within 2 s of a true boundary — the case's boundary tolerance |
+| step-F1 @ IoU 0.5 — the case rule | **0.503** | **0.516** | 0.483 | one-to-one matching of steps at IoU ≥ 0.5; the single model shipped before scored 0.422 / 0.413 / 0.096 |
+| step-F1 @ IoU 0.25 | 0.710 | 0.711 | 0.558 | the same with looser overlap |
+| boundary precision, ±2 s | **0.90** | 0.72 | — | share of our cuts within 2 s of a true boundary — the case's boundary tolerance |
 | boundary precision, ±1 s | 0.83 | 0.67 | — | the same at half the tolerance |
-| boundary recall, ±2 s | 0.52 | 0.51 | — | share of true boundaries we cut within 2 s; the rest are mostly sub-second steps |
-| boundary error, matched cuts | 0.28 s | 0.36 s | — | mean distance of matched cuts to the truth |
-| steps per clip, ours − truth | −0.2 | +1.3 | −0.8 | over- or under-segmentation |
+| boundary recall, ±2 s | 0.51 | 0.54 | — | share of true boundaries we cut within 2 s; the rest are mostly sub-second steps |
+| boundary error, matched cuts | 0.27 s | 0.34 s | — | mean distance of matched cuts to the truth |
+| steps per clip, ours − truth | −0.2 | +1.7 | +2.6 | over- or under-segmentation |
 
-The robot hold-out has two six-second subtasks per episode, so its step-F1 says mainly that the detector does not over-segment a manipulator (the single fine-grained model cut it into eleven pieces); its boundary columns are omitted because one true boundary per clip makes them meaningless. Numbers come from `scripts/boundary_report.py --thr 0.7 --gap 0.5` on the dumped probabilities of `checkpoints/boundary.pt`; every table behind them is in [experiments/results/2026-09-05-boundary-final.md](experiments/results/2026-09-05-boundary-final.md).
+The robot hold-out has two six-second subtasks per episode; the consensus cuts a manipulator into four to five pieces instead of the two the coarse ground truth has (a single fine-grained model cut it into eleven), and its boundary columns are omitted because one true boundary per clip makes them meaningless. Numbers come from `scripts/boundary_report.py --thr 0.5 --gap 0.5` on the dumped probabilities of `checkpoints/boundary.pt`; every table behind them is in [experiments/results/2026-09-05-boundary-final.md](experiments/results/2026-09-05-boundary-final.md).
 
 Product constraints from the case, measured end to end on the app:
 
 | | value | case target |
 | --- | --- | --- |
 | processing per 20 s clip, with naming | ~40 s | ≤ 120 s |
-| boundary error, matched cuts | 0.28 s | ≤ 2 s |
+| boundary error, matched cuts | 0.27 s | ≤ 2 s |
 | valid JSON / CSV export | 100% | 100% |
 | clips returned without a step | 0 (whole clip is one step when nothing is found) | — |
 

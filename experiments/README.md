@@ -30,9 +30,9 @@ Headline numbers (step-F1 at IoU 0.5, one-to-one, no labels):
 
 | set | single model in `main` before | shipped ensemble |
 | --- | --- | --- |
-| 85 atomic clips (Assembly101 fine, sessions unseen in training) | 0.422 | **0.498** |
-| EPIC-100, mid granularity (16 clips) | 0.413 | **0.535** |
-| LIBERO robot hold-out (10 episodes) | 0.096 | **0.733** |
+| 85 atomic clips (Assembly101 fine, sessions unseen in training) | 0.422 | **0.503** |
+| EPIC-100, mid granularity (16 clips) | 0.413 | **0.516** |
+| LIBERO robot hold-out (10 episodes) | 0.096 | 0.483 |
 
 ## Reading and sources
 
