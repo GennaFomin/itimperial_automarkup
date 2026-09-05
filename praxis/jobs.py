@@ -372,6 +372,10 @@ def process_video(video_id: str) -> None:
         checkpoint("recognize")
 
         result = annotate_clip(source, meta, perception, started)
+        # Именование — самая долгая стадия; удалённое за это время задание не должно
+        # оставить после себя ни события в журнале, ни строки с результатом.
+        if gone():
+            return
         annotation = result.annotation
         annotation.provenance.stages_ms["decode"] = decode_ms
         annotation.provenance.artifacts = _artifacts(directory)
@@ -394,8 +398,6 @@ def process_video(video_id: str) -> None:
             },
         )
 
-        if gone():
-            return
         store.update_video(
             video_id,
             status="done",

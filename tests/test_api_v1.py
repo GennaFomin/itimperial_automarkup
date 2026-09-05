@@ -634,3 +634,25 @@ def test_low_resolution_is_judged_by_the_short_side(client, tmp_path):
         response = client.post("/api/v1/jobs", files={"file": (clip.name, handle, "video/mp4")})
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "VIDEO_TOO_SMALL"
+
+
+def test_run_deleted_during_naming_leaves_no_events(client, clips, monkeypatch):
+    """Удаление после контрольной точки, во время именования: журнал прогона не пишется."""
+    from praxis import jobs
+
+    job_id = "deleted-while-naming"
+    meta = jobs.prepare_upload(job_id, "ok.mp4", clips["ok"].read_bytes())
+    store.create_video(job_id, "ok.mp4", meta)
+    real_annotate = jobs.annotate_clip
+
+    def annotate_then_vanish(*args, **kwargs):
+        result = real_annotate(*args, **kwargs)
+        jobs.delete_video(job_id)
+        return result
+
+    monkeypatch.setattr(jobs, "annotate_clip", annotate_then_vanish)
+    jobs.process_video(job_id)
+
+    assert store.get_video(job_id) is None
+    assert store.events(job_id) == []
+    assert not (config.WORK_DIR / job_id).exists()
