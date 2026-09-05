@@ -224,3 +224,52 @@ def test_prominence_ignores_ripples_on_a_plateau():
     lone = np.full(40, 0.1, dtype=np.float32)
     lone[20] = 0.9
     assert peaks_above(lone, level=0.5, minimum=3, prominence=0.2) == [20]
+
+
+def test_activity_segments_keep_only_moving_parts_and_split_by_cuts():
+    from praxis.pipeline.learned import activity_segments
+
+    fps = 8.0
+    motion = np.zeros(80, dtype=np.float32)
+    motion[8:24] = 1.0   # действие 1–3 с
+    motion[40:64] = 1.0  # действие 5–8 с, внутри разрез детектора
+    scores = np.zeros(80, dtype=np.float32)
+    scores[52] = 0.9
+    segments = activity_segments(scores, motion, fps, 0.5, 4, 0.0, 0.5, 0.5, 0.0, 0.25)
+    assert segments == [(8, 24), (40, 52), (52, 64)]
+    # со сглаживанием 0.5 с края расползаются на полокна, разрезы остаются на месте
+    smoothed = activity_segments(scores, motion, fps, 0.5, 4, 0.0, 0.5, 0.5, 0.5, 0.25)
+    assert [s[0] for s in smoothed] == [8, 40, 52] and smoothed[0][1] in (24, 25, 26)
+
+
+def test_activity_segments_fall_back_to_full_coverage_without_a_motion_band():
+    from praxis.pipeline.learned import activity_segments
+
+    scores = np.zeros(40, dtype=np.float32)
+    scores[20] = 0.9
+    assert activity_segments(scores, np.zeros(0), 8.0, 0.5, 4, 0.0, 0.5, 0.5, 0.5, 0.25) == [(0, 20), (20, 40)]
+    assert activity_segments(scores, np.zeros(40), 8.0, 0.5, 4, 0.0, 0.5, 0.5, 0.5, 0.25) == [(0, 20), (20, 40)]
+
+
+def test_activity_segments_close_short_dips():
+    from praxis.pipeline.learned import activity_segments
+
+    motion = np.ones(40, dtype=np.float32)
+    motion[19:21] = 0.0  # провал 0.25 с внутри одного действия
+    segments = activity_segments(np.zeros(40, dtype=np.float32), motion, 8.0, 0.5, 4, 0.0, 0.5, 0.5, 0.0, 0.25)
+    assert segments == [(0, 40)]
+
+
+def test_learned_pause_curve_removes_transitions_from_steps():
+    from praxis.pipeline.learned import activity_segments
+
+    motion = np.ones(80, dtype=np.float32)  # движение есть везде: переход с движением
+    gaps = np.zeros(80, dtype=np.float32)
+    gaps[30:50] = 0.9  # детектор пауз: 2.5 с перехода
+    scores = np.zeros(80, dtype=np.float32)
+    segments = activity_segments(scores, motion, 8.0, 0.5, 4, 0.0, 0.15, 0.7, 0.0, 0.25, gaps, 0.5, 0.5)
+    assert segments == [(0, 30), (50, 80)]
+    # короткий всплеск паузы (0.25 с) не считается
+    gaps[:] = 0.0
+    gaps[10:12] = 0.9
+    assert activity_segments(scores, motion, 8.0, 0.5, 4, 0.0, 0.15, 0.7, 0.0, 0.25, gaps, 0.5, 0.5) == [(0, 80)]

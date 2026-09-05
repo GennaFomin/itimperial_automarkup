@@ -21,6 +21,16 @@ from praxis.pipeline.learned import difference_channels, encode, post, stack_mot
 from praxis.schema import Annotation
 
 
+def gap_frames(steps: list[tuple[float, float]], duration: float, offset: float, fps: float, count: int) -> list[float]:
+    """Индексы кадров сетки признаков, лежащих вне всех шагов. Цель детектора пауз."""
+    times = offset + np.arange(count) / fps
+    inside = np.zeros(count, dtype=bool)
+    for start, end in steps:
+        inside |= (times >= start) & (times < end)
+    inside |= times >= duration
+    return [float(index) for index in np.flatnonzero(~inside)]
+
+
 def check_corpus(total: int, kept: int) -> None:
     """Сбой сервиса признаков молча уменьшил бы корпус, а модель выглядела бы как обычная."""
     skipped = total - kept
@@ -38,6 +48,8 @@ def main() -> None:
     parser.add_argument("--no-activate", action="store_true", help="не подменять живую модель")
     parser.add_argument("--augment", action="store_true", help="временная аугментация C2F-TCN")
     parser.add_argument("--stages", type=int, default=4, help="число стадий MS-TCN")
+    parser.add_argument("--target", choices=["boundaries", "gaps"], default="boundaries",
+                        help="boundaries — смены действий; gaps — кадры внутри пауз между шагами (детектор пауз)")
     args = parser.parse_args()
 
     references = sorted((args.train / "gt").glob("*.json"))
@@ -66,15 +78,22 @@ def main() -> None:
             appearance=matrix,
             offset=float(video.get("offset_sec", 0.0)),
         )
-        # Границы в кадрах сетки признаков: и начала, и концы шагов — всё это смены.
-        moments = sorted(
-            {step.start_sec for step in truth.steps} | {step.end_sec for step in truth.steps}
-        )
-        boundaries = [
-            (moment - perception.offset) * perception.fps
-            for moment in moments
-            if 0 < moment < truth.video.duration_sec
-        ]
+        if args.target == "gaps":
+            # Кадры вне размеченных шагов: пауза между действиями, включая края ролика.
+            boundaries = gap_frames(
+                [(step.start_sec, step.end_sec) for step in truth.steps],
+                truth.video.duration_sec, perception.offset, perception.fps, len(matrix),
+            )
+        else:
+            # Границы в кадрах сетки признаков: и начала, и концы шагов — всё это смены.
+            moments = sorted(
+                {step.start_sec for step in truth.steps} | {step.end_sec for step in truth.steps}
+            )
+            boundaries = [
+                (moment - perception.offset) * perception.fps
+                for moment in moments
+                if 0 < moment < truth.video.duration_sec
+            ]
         matrix = (
             stack_motion(perception.appearance, perception.motion)
             if config.TAS_MOTION else perception.appearance
@@ -93,7 +112,8 @@ def main() -> None:
           f"{sum(len(s['boundaries']) for s in samples)} границ…", flush=True)
     answer = post(
         "/train",
-        {"samples": samples, "epochs": args.epochs, "tolerance": args.tolerance,
+        {"samples": samples, "epochs": args.epochs,
+         "tolerance": 0 if args.target == "gaps" else args.tolerance,
          "name": args.name, "activate": not args.no_activate, "augment": args.augment,
          "stages": args.stages},
         timeout=3600,

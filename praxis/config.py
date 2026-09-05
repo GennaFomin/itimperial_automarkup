@@ -150,10 +150,13 @@ ENSEMBLE_TOLERANCE_SEC = float(os.getenv("PRAXIS_ENSEMBLE_TOLERANCE_SEC", "0.5")
 ENSEMBLE_CONFIRM = float(os.getenv("PRAXIS_ENSEMBLE_CONFIRM", "0.3"))
 ENSEMBLE_STRONG = float(os.getenv("PRAXIS_ENSEMBLE_STRONG", "0.9"))
 # Порог пика для отгружаемого ансамбля-консенсуса (минимум по двум fine-моделям, 8 Гц):
-# результат почти не зависит от порога в 0.3–0.7 (0.497–0.503 на 85 атомарных роликах),
-# 0.5 берёт больше реальных смен на бытовых роликах вне обучающего домена, где кривая
-# ниже, чем на Assembly101. См. experiments/results/2026-09-05-boundary-final.md.
-TAS_THRESHOLD = float(os.getenv("PRAXIS_TAS_THRESHOLD", "0.5"))
+# результат почти не зависит от порога в 0.3–0.7 на 85 атомарных роликах; 0.6 вместе с
+# режимом пауз по активности подобран сразу по трём наборам — снятые ролики с паузами,
+# Assembly101 fine, EPIC. См. experiments/results/2026-09-05-boundary-final.md.
+TAS_THRESHOLD = float(os.getenv("PRAXIS_TAS_THRESHOLD", "0.6"))
+# Минимальный интервал между пиками детектора. Отдельно от минимальной длины шага:
+# разрезы ставятся не реже 0.5 с, а сегменты короче 0.75 с отбрасываются.
+TAS_PEAK_GAP_SEC = float(os.getenv("PRAXIS_TAS_PEAK_GAP_SEC", "0.5"))
 # Полоса движения как 769-й канал детектора. Одинакова для руки человека и
 # манипулятора — граница это событие захвата, а не внешний вид.
 TAS_MOTION = os.getenv("PRAXIS_TAS_MOTION", "0").lower() not in {"0", "false", "no"}
@@ -196,10 +199,28 @@ MAX_SEGMENTS = int(os.getenv("PRAXIS_MAX_SEGMENTS", "8"))
 # Интервал между пиками детектора и фильтр коротких сегментов. С признаками 8 Гц пики
 # достаточно острые для 0.5 с: 0.478 против 0.428 при 1 с на 85 атомарных роликах; на
 # старых признаках 4 Гц было наоборот — см. experiments/results/2026-09-05-boundary-final.md.
-MIN_SEGMENT_SEC = float(os.getenv("PRAXIS_MIN_SEGMENT_SEC", "0.5"))
+MIN_SEGMENT_SEC = float(os.getenv("PRAXIS_MIN_SEGMENT_SEC", "0.75"))
 # Ниже какой доли среднего движения по ролику отрезок считается паузой, а не шагом.
 # Ноль отключает пропуски и возвращает сплошное покрытие таймлайна.
 # Доля от среднего движения, ниже которой сегмент считается паузой и в шаги не идёт.
 # Ноль отключает фильтр: на атомарной гранулярности шаги идут плотно и пауз почти нет.
 IDLE_RATIO = float(os.getenv("PRAXIS_IDLE_RATIO", "0.0"))
+# Паузы у обученного детектора: "activity" — шаги идут только там, где полоса движения
+# выше уровня (от шумового пола ролика, с гистерезисом), разрезы детектора делят
+# активные области изнутри; "none" — сплошное покрытие таймлайна. Настроено по трём
+# снятым роликам с размеченными паузами: 0.62 против 0.18 у сплошной нарезки, одинаково
+# на 720p и 256p. В Assembly101 и EPIC паузы размечены иначе (переходы с движением), там
+# этот режим теряет (0.47 → 0.32), поэтому для таких наборов PRAXIS_IDLE_MODE=none.
+# См. experiments/results/2026-09-05-boundary-final.md.
+IDLE_MODE = os.getenv("PRAXIS_IDLE_MODE", "activity")
+ACTIVITY_LEVEL = float(os.getenv("PRAXIS_ACTIVITY_LEVEL", "0.15"))  # старт активности: доля хода «пол → среднее» полосы движения
+ACTIVITY_LOW = float(os.getenv("PRAXIS_ACTIVITY_LOW", "0.7"))  # конец активности: доля от уровня старта (гистерезис)
+ACTIVITY_SMOOTH_SEC = float(os.getenv("PRAXIS_ACTIVITY_SMOOTH_SEC", "0.5"))  # сглаживание полосы движения
+ACTIVITY_CLOSE_SEC = float(os.getenv("PRAXIS_ACTIVITY_CLOSE_SEC", "0.25"))  # провалы короче этого закрываются
+# Обучаемый детектор пауз: тот же MS-TCN, обученный на кадры вне размеченных шагов
+# (переходы с движением, ожидание). Второй сервис serve_tas с чекпоинтом
+# checkpoints/gapness.pt; пусто — только неподвижность по полосе движения.
+GAP_BASE_URL = os.getenv("PRAXIS_GAP_BASE_URL", "")
+GAP_THRESHOLD = float(os.getenv("PRAXIS_GAP_THRESHOLD", "0.5"))
+GAP_MIN_SEC = float(os.getenv("PRAXIS_GAP_MIN_SEC", "0.5"))  # короче этого пауза не считается
 MERGE_GAIN = float(os.getenv("PRAXIS_MERGE_GAIN", "0"))

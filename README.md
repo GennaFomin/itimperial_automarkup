@@ -121,12 +121,12 @@ flowchart LR
 | --- | --- | --- |
 | frames | ffmpeg, 32 fps, 256 px | one pass gives both the encoder input and the motion band for the timeline |
 | features | TimeSformer-K400, 16-frame window (0.5 s), stride 4 (8 Hz), cached on disk | Kinetics-supervised features beat self-supervised ones on temporal tasks; the short window is what makes sub-second steps visible |
-| boundaries | consensus of two MS-TCN heads (minimum of their per-frame probabilities), peaks above 0.5 at least 0.5 s apart | class-agnostic by construction — trained on timecodes only — so it transfers to any domain |
+| boundaries | consensus of two MS-TCN heads (minimum of their per-frame probabilities), peaks above 0.6 at least 0.5 s apart; steps exist only where the motion band shows activity, the rest is pause | class-agnostic by construction — trained on timecodes only — so it transfers to any domain |
 | labels | Qwen3-VL-8B, 5 frames + before/after context, open vocabulary | no class list exists in advance, so the answer is generated, not picked |
 | validation | pydantic schema and invariants | no overlaps, keyframe inside its step, everything inside the duration |
 | export | the case owner's contract, integer milliseconds | `schema_version`, `model_version`, latency, cost, artifacts |
 
-Granularity stays a knob, not a rewrite: `PRAXIS_MIN_SEGMENT_SEC` (peak interval and minimum step), `PRAXIS_TAS_THRESHOLD` (peak height) and `PRAXIS_IDLE_RATIO` (pauses) are all runtime settings.
+Granularity stays a knob, not a rewrite: `PRAXIS_TAS_THRESHOLD` (peak height), `PRAXIS_TAS_PEAK_GAP_SEC` (peak interval), `PRAXIS_MIN_SEGMENT_SEC` (minimum step), `PRAXIS_IDLE_MODE` with `PRAXIS_ACTIVITY_LEVEL` / `PRAXIS_ACTIVITY_LOW` (where a step starts and ends) are all runtime settings.
 
 ---
 
@@ -142,7 +142,7 @@ The detector is the part of the pipeline the case metric depends on most, and th
 | **Model** | MS-TCN (Farha & Gall, 2019): 2 stages × 10 dilated residual layers, 64 filters, per-stage loss, smoothing loss. One logit per frame — *did the action change here* — instead of a class softmax, so no taxonomy is ever learned. |
 | **Input** | TimeSformer-K400 features, 768-d, 16-frame window at 32 fps (0.5 s), stride 4 (8 Hz). No motion or difference channels: measured, no gain. |
 | **Ensemble** | two checkpoints packed into one file, [checkpoints/boundary.pt](checkpoints/README.md), fused by *consensus*: the per-frame minimum of their probabilities, so a cut needs both models to see a change. Trained on 554 and 203 Assembly101 fine-grained clips respectively. |
-| **Decoder** | local maxima of the fused probability above 0.5, at least 0.5 s apart; segments between cuts become steps. |
+| **Decoder** | local maxima of the fused probability above 0.6, at least 0.5 s apart. Steps are the *active* regions of the motion band (above the clip's noise floor plus 0.15 of the way to its mean, with hysteresis), split by those cuts; everything else is a pause. Steps shorter than 0.75 s are dropped. |
 | **Training signal** | step start and end timecodes only, from public datasets (Assembly101, LIBERO). No manual annotation, no class labels. |
 
 ### How it was chosen
@@ -151,7 +151,8 @@ The detector is the part of the pipeline the case metric depends on most, and th
 2. **Architecture ablation is flat on the target regime.** 2 vs 4 stages, boundary width σ, motion channels, C2F augmentation, test-time augmentation, three seeds and three times more data all land within ±0.01 on 85 atomic clips whose recording sessions never appear in training ([ranking](experiments/results/2026-09-05-ranking85.md), [stages](experiments/results/2026-09-05-stages-variants.md)).
 3. **What is *not* flat: the feature time resolution.** Halving the encoder window to 0.5 s at 8 Hz sharpens the peaks enough for a 0.5 s interval between cuts, which is where the short steps live: +0.05 for the same model and corpus ([final report](experiments/results/2026-09-05-boundary-final.md)).
 4. **Consensus instead of averaging.** The minimum of two models' probabilities keeps only the changes both see: on the atomic set it scores 0.497–0.503 at *any* threshold from 0.3 to 0.7, which is what makes it safe for an unknown domain, and on hand-filmed desk clips outside the training data it finds 8–9 steps per 30 s clip where an averaged robot-aware pair found 3–6 ([final report](experiments/results/2026-09-05-boundary-final.md)). A member trained with robot episodes suppresses the robot's micro-motions but also the real actions in unfamiliar human clips, so it is not shipped ([cross-embodiment](experiments/results/2026-09-05-cross-embodiment.md)).
-5. **Decoding was swept offline** over dumped probabilities — threshold, interval, prominence, penalised DP — so every number above uses the decoder the application actually runs ([decoders](experiments/results/2026-09-05-decoders-base.md)).
+5. **Pauses come from the motion band, not from the detector.** A step exists only where the frame-difference band shows activity above the clip's own noise floor; the detector's cuts split active regions from inside. On three hand-filmed desk clips annotated with pauses (50–73 % of the time idle, [experiments/filmed](experiments/filmed/)) this lifts step-F1 from 0.18 to 0.62, identically on 720p originals and 256p copies. Assembly101 and EPIC annotate pauses the other way round — their gaps are *transitions with motion* — so with pauses on they drop to 0.32 / 0.25; the setting is a switch (`PRAXIS_IDLE_MODE=none` restores 0.47 / 0.57). A learned pause detector trained on those transitions (`train_boundaries.py --target gaps`) separates them well but smears into the actions' edges and does not beat stillness yet; it ships as an optional second service ([final report](experiments/results/2026-09-05-boundary-final.md)).
+6. **Decoding was swept offline** over dumped probabilities — threshold, interval, prominence, penalised DP, activity levels — jointly on the three sets, so every number above uses the decoder the application actually runs ([decoders](experiments/results/2026-09-05-decoders-base.md)).
 
 ### Reproduce a number
 
@@ -178,17 +179,17 @@ Three labelled validation sets, all from public datasets with their own ground t
 
 Boundary detector, application decoder, no labels involved:
 
-| metric | atomic | mid | robot | what it means |
+| metric | filmed | atomic | mid | what it means |
 | --- | --- | --- | --- | --- |
-| step-F1 @ IoU 0.5 — the case rule | **0.503** | **0.516** | 0.483 | one-to-one matching of steps at IoU ≥ 0.5; the single model shipped before scored 0.422 / 0.413 / 0.096 |
-| step-F1 @ IoU 0.25 | 0.710 | 0.711 | 0.558 | the same with looser overlap |
-| boundary precision, ±2 s | **0.90** | 0.72 | — | share of our cuts within 2 s of a true boundary — the case's boundary tolerance |
-| boundary precision, ±1 s | 0.83 | 0.67 | — | the same at half the tolerance |
-| boundary recall, ±2 s | 0.51 | 0.54 | — | share of true boundaries we cut within 2 s; the rest are mostly sub-second steps |
-| boundary error, matched cuts | 0.27 s | 0.34 s | — | mean distance of matched cuts to the truth |
-| steps per clip, ours − truth | −0.2 | +1.7 | +2.6 | over- or under-segmentation |
+| step-F1 @ IoU 0.5 — the case rule, shipped decoder with pauses | **0.617** | 0.315 | 0.249 | one-to-one matching of steps at IoU ≥ 0.5; atomic and mid annotate pauses as moving transitions, see below |
+| step-F1 @ IoU 0.5, contiguous decoder (`PRAXIS_IDLE_MODE=none`) | 0.179 | **0.474** | **0.568** | the same without pauses; the single model shipped before scored — / 0.422 / 0.413 |
+| boundary precision, ±2 s | — | **0.90** | 0.72 | share of our cuts within 2 s of a true boundary — the case's boundary tolerance; independent of the pause mode |
+| boundary precision, ±1 s | — | 0.83 | 0.67 | the same at half the tolerance |
+| boundary error, matched cuts | — | 0.27 s | 0.34 s | mean distance of matched cuts to the truth |
 
-The robot hold-out has two six-second subtasks per episode; the consensus cuts a manipulator into four to five pieces instead of the two the coarse ground truth has (a single fine-grained model cut it into eleven), and its boundary columns are omitted because one true boundary per clip makes them meaningless. Numbers come from `scripts/boundary_report.py --thr 0.5 --gap 0.5` on the dumped probabilities of `checkpoints/boundary.pt`; every table behind them is in [experiments/results/2026-09-05-boundary-final.md](experiments/results/2026-09-05-boundary-final.md).
+**filmed** — three 30-second desk clips we filmed ourselves and annotated frame by frame with pauses (29 actions, [experiments/filmed](experiments/filmed/)): the closest proxy for the case owner's hidden set, and the only set whose pauses mean stillness. In Assembly101 and EPIC the unannotated gaps are transitions full of motion, which is why the pause mode costs them step-F1 while the cuts themselves stay as precise as before. On the robot hold-out the consensus scores 0.483 without pauses.
+
+Numbers come from the dumped probabilities of `checkpoints/boundary.pt` (`scripts/boundary_report.py`, `scripts/score_table.py`) and the offline pause sweep; every table behind them is in [experiments/results/2026-09-05-boundary-final.md](experiments/results/2026-09-05-boundary-final.md).
 
 Product constraints from the case, measured end to end on the app:
 

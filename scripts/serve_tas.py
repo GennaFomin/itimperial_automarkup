@@ -327,10 +327,12 @@ def predict(request: PredictRequest) -> dict:
             raise HTTPException(400, f"детектор ждёт {state['dim']} признаков, получено {sample.dim}")
     device, model = state["device"], state["model"]
     scores = []
+    means = []
     for sample in request.samples:
         features = torch.tensor(decode(sample))
         windows = (1, 2, 3, 4) if request.tta else (1,)
         outputs = []
+        spreads = []
         for window in windows:
             pooled, _ = temporal_pool(features, torch.zeros(len(features)), window)
             with torch.no_grad():
@@ -339,12 +341,19 @@ def predict(request: PredictRequest) -> dict:
                     torch.sigmoid(m(pooled.T.to(device).unsqueeze(0))[-1])[0, 0].cpu() for m in members
                 ])
                 score = stacked.min(0).values if state.get("fusion") == "min" else stacked.mean(0)
+                spread = stacked.mean(0)  # среднее по участникам — для поиска плато переходов
             score = score.repeat_interleave(window)[: len(features)]
+            spread = spread.repeat_interleave(window)[: len(features)]
             if len(score) < len(features):
                 score = torch.nn.functional.pad(score, (0, len(features) - len(score)), value=float(score[-1]))
+                spread = torch.nn.functional.pad(spread, (0, len(features) - len(spread)), value=float(spread[-1]))
             outputs.append(score)
+            spreads.append(spread)
         scores.append(torch.stack(outputs).mean(0).tolist())
-    return {"scores": scores}
+        means.append(torch.stack(spreads).mean(0).tolist())
+    # "mean" — среднее вероятностей участников независимо от правила слияния: по нему
+    # ищутся плато переходов (пауза с движением), по "scores" — разрезы.
+    return {"scores": scores, "mean": means}
 
 
 def main() -> None:

@@ -1,0 +1,118 @@
+{
+ "video": {
+  "id": "test_phone",
+  "filename": "test_phone.mp4",
+  "duration_sec": 33.198,
+  "fps": 23.911,
+  "width": 1280,
+  "height": 720
+ },
+ "steps": [
+  {
+   "id": 0,
+   "level": "coarse",
+   "parent_id": null,
+   "start_sec": 5.25,
+   "end_sec": 7.5,
+   "action": "взял",
+   "object": "телефон",
+   "keyframe_sec": 6.375,
+   "confidence": 1.0,
+   "source": "edited",
+   "verified": true
+  },
+  {
+   "id": 1,
+   "level": "coarse",
+   "parent_id": null,
+   "start_sec": 9.25,
+   "end_sec": 10.25,
+   "action": "повернул",
+   "object": "телефон",
+   "keyframe_sec": 9.75,
+   "confidence": 1.0,
+   "source": "edited",
+   "verified": true
+  },
+  {
+   "id": 2,
+   "level": "coarse",
+   "parent_id": null,
+   "start_sec": 11.25,
+   "end_sec": 12.0,
+   "action": "повернул",
+   "object": "телефон",
+   "keyframe_sec": 11.625,
+   "confidence": 1.0,
+   "source": "edited",
+   "verified": true
+  },
+  {
+   "id": 3,
+   "level": "coarse",
+   "parent_id": null,
+   "start_sec": 13.75,
+   "end_sec": 15.703,
+   "action": "поднёс",
+   "object": "телефон к уху",
+   "keyframe_sec": 14.375,
+   "confidence": 1.0,
+   "source": "edited",
+   "verified": true
+  },
+  {
+   "id": 4,
+   "level": "coarse",
+   "parent_id": null,
+   "start_sec": 23.0,
+   "end_sec": 23.75,
+   "action": "опустил",
+   "object": "телефон",
+   "keyframe_sec": 23.375,
+   "confidence": 1.0,
+   "source": "edited",
+   "verified": true
+  },
+  {
+   "id": 5,
+   "level": "coarse",
+   "parent_id": null,
+   "start_sec": 26.0,
+   "end_sec": 28.25,
+   "action": "положил",
+   "object": "телефон",
+   "keyframe_sec": 27.125,
+   "confidence": 1.0,
+   "source": "edited",
+   "verified": true
+  },
+  {
+   "id": 6,
+   "level": "coarse",
+   "parent_id": null,
+   "start_sec": 30.5,
+   "end_sec": 31.25,
+   "action": "протянул",
+   "object": "руку к камере",
+   "keyframe_sec": 30.875,
+   "confidence": 1.0,
+   "source": "edited",
+   "verified": true
+  }
+ ],
+ "provenance": {
+  "schema_version": "1.0",
+  "app_version": "manual",
+  "pipeline": "manual-frames-4fps",
+  "vocabulary": "none",
+  "models": {},
+  "backend": "human",
+  "processing_sec": 0.0,
+  "latency_ms": null,
+  "stages_ms": {},
+  "cost": {},
+  "artifacts": [],
+  "warnings": [],
+  "created_at": "2026-09-05T15:10:00Z"
+ }
+}

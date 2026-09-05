@@ -28,3 +28,9 @@
 извлекает признаки с `PRAXIS_VIDEO_FPS=32`, `PRAXIS_VIDEO_WINDOW=16`, `PRAXIS_VIDEO_STRIDE=4`
 и шлёт 768 признаков (`PRAXIS_TAS_MOTION=0`, `PRAXIS_TAS_DIFF=0`); порог
 `PRAXIS_TAS_THRESHOLD=0.5`, интервал `PRAXIS_MIN_SEGMENT_SEC=0.5` — умолчания `praxis/config.py`.
+
+`gapness.pt` — опциональный детектор пауз-переходов: та же MS-TCN, обученная на кадры вне
+размеченных шагов Assembly101 fine (`train_boundaries.py --target gaps`). По умолчанию не
+используется (см. `experiments/results/2026-09-05-boundary-final.md`, раздел про паузы);
+подключается вторым сервисом: `python scripts/serve_tas.py --port 8105 --checkpoint
+checkpoints/gapness.pt` и `PRAXIS_GAP_BASE_URL=http://127.0.0.1:8105`.

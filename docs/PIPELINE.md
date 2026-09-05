@@ -119,7 +119,13 @@ PRAXIS_VLM_BASE_URL=http://127.0.0.1:8100 \
 | --- | --- | --- |
 | `PRAXIS_PIPELINE` | `tsm-kernel` | способ нарезки |
 | `PRAXIS_TSM_PENALTY` | `2.0` | **главная ручка гранулярности**: больше штраф — меньше шагов |
-| `PRAXIS_MIN_SEGMENT_SEC` | `0.5` | минимальная длина шага и интервал между пиками детектора |
+| `PRAXIS_MIN_SEGMENT_SEC` | `0.75` | минимальная длина шага |
+| `PRAXIS_TAS_PEAK_GAP_SEC` | `0.5` | минимальный интервал между пиками детектора |
+| `PRAXIS_TAS_THRESHOLD` | `0.6` | порог пика детектора |
+| `PRAXIS_IDLE_MODE` | `activity` | паузы: шаги только в активных областях полосы движения; `none` — сплошная нарезка |
+| `PRAXIS_ACTIVITY_LEVEL` / `PRAXIS_ACTIVITY_LOW` | `0.15` / `0.7` | старт активности: доля хода от шумового пола (20-й перцентиль) к среднему движению; конец — доля от уровня старта |
+| `PRAXIS_ACTIVITY_SMOOTH_SEC` / `PRAXIS_ACTIVITY_CLOSE_SEC` | `0.5` / `0.25` | сглаживание полосы и закрытие коротких провалов |
+| `PRAXIS_GAP_BASE_URL` | пусто | опционально: второй сервис детектора с `checkpoints/gapness.pt` (паузы-переходы); `PRAXIS_GAP_THRESHOLD` 0.5, `PRAXIS_GAP_MIN_SEC` 0.5 |
 | `PRAXIS_VIDEO_FPS` | `32` | частота кадров для энкодера; с окном 16 кадров это окно 0.5 с |
 | `PRAXIS_VIDEO_WINDOW` | `16` | кадров в окне энкодера |
 | `PRAXIS_VIDEO_STRIDE` | `4` | сдвиг окна в кадрах: 8 признаков в секунду при 32 fps |
