@@ -18,7 +18,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Query, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Form, Query, Request, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
@@ -127,6 +127,11 @@ def _job_view(record: dict) -> dict:
         "duration_ms": round((record["duration_sec"] or 0) * 1000),
         "warnings": warnings,
         "reviewed": bool(record["review"]),
+        # Настройки прогона этого задания; null — умолчание сервера.
+        "options": {
+            "pipeline": record.get("pipeline"),
+            "tas_threshold": record.get("tas_threshold"),
+        },
     }
 
 
@@ -141,8 +146,42 @@ def _progress(record: dict) -> float:
 # ------------------------------------------------------------------ задания
 
 
+# Способы нарезки, которые можно выбрать на задание. Остальные сегментаторы —
+# исследовательские, им место в sweep, а не в кнопке.
+PIPELINES = {
+    "learned-boundaries": "Детектор границ: действия с паузами между ними",
+    "tsm-kernel": "Ядровой change-point: ролик нарезан подряд, без пауз",
+}
+
+
+def _job_options(pipeline: str | None, tas_threshold: float | None) -> tuple[str | None, float | None]:
+    """Проверка настроек задания. Пустые значения — умолчание сервера."""
+    pipeline = pipeline or None
+    if pipeline is not None and pipeline not in PIPELINES:
+        raise ContractError(
+            422,
+            errors.INVALID_OPTIONS,
+            f"неизвестный способ нарезки «{pipeline}»",
+            {"allowed": sorted(PIPELINES)},
+        )
+    if tas_threshold is not None and not 0 < tas_threshold < 1:
+        raise ContractError(
+            422,
+            errors.INVALID_OPTIONS,
+            "порог детектора должен быть между 0 и 1",
+            {"tas_threshold": tas_threshold},
+        )
+    return pipeline, tas_threshold
+
+
 @router.post("/jobs", status_code=202)
-async def create_job(background: BackgroundTasks, file: UploadFile | None = None) -> dict:
+async def create_job(
+    background: BackgroundTasks,
+    file: UploadFile | None = None,
+    pipeline: str | None = Form(None),
+    tas_threshold: float | None = Form(None),
+) -> dict:
+    pipeline, tas_threshold = _job_options(pipeline, tas_threshold)
     if file is None:
         raise ContractError(
             422,
@@ -159,7 +198,9 @@ async def create_job(background: BackgroundTasks, file: UploadFile | None = None
     except media.MediaError as error:
         raise ContractError(422, errors.DECODE_FAILED, str(error)) from error
 
-    store.create_video(job_id, file.filename or "video.mp4", meta)
+    store.create_video(
+        job_id, file.filename or "video.mp4", meta, pipeline=pipeline, tas_threshold=tas_threshold
+    )
     background.add_task(jobs.process_video, job_id)
     return {
         "job_id": job_id,
@@ -343,6 +384,10 @@ async def get_limits() -> dict:
         "min_height": config.MIN_HEIGHT,
         "allowed_extensions": sorted(config.ALLOWED_SUFFIXES),
         "job_timeout_ms": round(config.JOB_TIMEOUT_SEC * 1000),
+        # Что можно выбрать на задание и что будет, если не выбирать.
+        "pipelines": [{"id": key, "label": label} for key, label in PIPELINES.items()],
+        "pipeline_default": config.PIPELINE,
+        "tas_threshold_default": config.TAS_THRESHOLD,
     }
 
 

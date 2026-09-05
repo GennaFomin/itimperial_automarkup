@@ -29,6 +29,8 @@ VIDEO_TOO_SMALL = "VIDEO_TOO_SMALL"
 INVALID_REVIEW = "INVALID_REVIEW"
 # Прогон прошёл не в полную силу: сервис признаков или именования был недоступен.
 DEGRADED = "DEGRADED"
+# Настройки прогона в запросе на создание задания вне допустимого.
+INVALID_OPTIONS = "INVALID_OPTIONS"
 
 
 class ContractError(HTTPException):

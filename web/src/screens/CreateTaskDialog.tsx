@@ -27,6 +27,9 @@ export function CreateTaskDialog({ onClose, onCreated }: Props) {
   const [title, setTitleValue] = useState('')
   const [dragOver, setDragOver] = useState(false)
   const [scenario, setScenario] = useState('ok')
+  // Пустая строка — «как на сервере»: умолчание живёт в конфигурации, а не в клиенте.
+  const [pipeline, setPipeline] = useState('')
+  const [threshold, setThreshold] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -111,6 +114,8 @@ export function CreateTaskDialog({ onClose, onCreated }: Props) {
         file: picked.file,
         scenario,
         durationMs: picked.durationMs,
+        pipeline: pipeline || null,
+        tasThreshold: threshold ? Number(threshold) : null,
       })
       if (title.trim()) setTitle(job_id, title.trim())
       onCreated()
@@ -233,6 +238,44 @@ export function CreateTaskDialog({ onClose, onCreated }: Props) {
             )}
           </div>
 
+          {limits?.pipelines && limits.pipelines.length > 0 && (
+            <div className="field">
+              <span className="field__label">Нарезка</span>
+              <select
+                className="select"
+                value={pipeline}
+                onChange={(e) => setPipeline(e.target.value)}
+              >
+                <option value="">Как на сервере — {pipelineLabel(limits, limits.pipeline_default)}</option>
+                {limits.pipelines.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+              {(pipeline || limits.pipeline_default) === 'learned-boundaries' && (
+                <>
+                  <select
+                    className="select"
+                    value={threshold}
+                    onChange={(e) => setThreshold(e.target.value)}
+                    aria-label="Гранулярность"
+                  >
+                    <option value="">
+                      Гранулярность как на сервере
+                      {limits.tas_threshold_default != null ? ` — порог ${limits.tas_threshold_default}` : ''}
+                    </option>
+                    <option value="0.5">Атомарные действия: взял, повернул, положил — порог 0.5</option>
+                    <option value="0.95">Крупные шаги: несколько действий с паузами — порог 0.95</option>
+                  </select>
+                  <span className="field__hint">
+                    Порог детектора — единственная ручка гранулярности: выше порог, меньше шагов.
+                  </span>
+                </>
+              )}
+            </div>
+          )}
+
           {USING_MOCK && (
             <label className="field">
               <span className="field__label">Сценарий мока</span>
@@ -270,6 +313,10 @@ export function CreateTaskDialog({ onClose, onCreated }: Props) {
       </div>
     </div>
   )
+}
+
+function pipelineLabel(limits: Limits, id: string | undefined): string {
+  return limits.pipelines?.find((p) => p.id === id)?.label ?? id ?? 'умолчание'
 }
 
 /** Требования печатаются из ответа сервера, чтобы не разойтись с ним числами. */

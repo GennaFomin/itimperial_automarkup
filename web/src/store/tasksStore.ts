@@ -25,6 +25,9 @@ export interface Task {
   /** Прогон прошёл не в полную силу: причина — здесь, а не в статусе. */
   warnings: string[]
   reviewed: boolean
+  /** Чем резали это задание; null — умолчание сервера. */
+  pipeline: string | null
+  tasThreshold: number | null
 }
 
 const TITLES_KEY = 'automarkup.titles.v2'
@@ -56,6 +59,8 @@ const toTask = (job: JobSummary, titles: Record<string, string>): Task => ({
   progress: job.progress,
   warnings: job.warnings ?? [],
   reviewed: job.reviewed,
+  pipeline: job.options?.pipeline ?? null,
+  tasThreshold: job.options?.tas_threshold ?? null,
 })
 
 interface TasksState {

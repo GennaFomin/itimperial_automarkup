@@ -90,6 +90,10 @@ def init_db() -> None:
             "ALTER TABLE videos ADD COLUMN finished_at TEXT",
             # Кооперативная отмена: прогон сам смотрит на флаг между стадиями.
             "ALTER TABLE videos ADD COLUMN cancel_requested INTEGER DEFAULT 0",
+            # Настройки прогона на уровне задания: чем резать и с каким порогом.
+            # NULL — умолчание сервера из конфигурации.
+            "ALTER TABLE videos ADD COLUMN pipeline TEXT",
+            "ALTER TABLE videos ADD COLUMN tas_threshold REAL",
         ):
             try:
                 connection.execute(statement)
@@ -97,11 +101,17 @@ def init_db() -> None:
                 pass
 
 
-def create_video(video_id: str, filename: str, meta: dict) -> None:
+def create_video(
+    video_id: str,
+    filename: str,
+    meta: dict,
+    pipeline: str | None = None,
+    tas_threshold: float | None = None,
+) -> None:
     with connect() as connection:
         connection.execute(
-            "INSERT INTO videos (id, filename, duration_sec, fps, width, height, status, created_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, 'queued', ?)",
+            "INSERT INTO videos (id, filename, duration_sec, fps, width, height, status,"
+            " created_at, pipeline, tas_threshold) VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)",
             (
                 video_id,
                 filename,
@@ -110,6 +120,8 @@ def create_video(video_id: str, filename: str, meta: dict) -> None:
                 meta["width"],
                 meta["height"],
                 now(),
+                pipeline,
+                tas_threshold,
             ),
         )
 

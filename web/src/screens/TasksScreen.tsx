@@ -11,6 +11,12 @@ import './TasksScreen.css'
 /** Пока в очереди есть задачи, список опрашивается — как требует контракт §2. */
 const POLL_MS = 2000
 
+/** Короткие подписи для карточки; полное название приходит с сервера в /limits. */
+const PIPELINE_SHORT: Record<string, string> = {
+  'learned-boundaries': 'детектор',
+  'tsm-kernel': 'change-point',
+}
+
 type Filter = 'all' | 'running' | 'ready' | 'failed'
 const FILTERS: Array<{ id: Filter; label: string }> = [
   { id: 'all', label: 'Все' },
@@ -220,6 +226,22 @@ function TaskCard({ task }: { task: Task }) {
                 <>
                   <span className="card__dot" />
                   <span style={{ color: 'var(--ok)' }}>проверено</span>
+                </>
+              )}
+              {task.pipeline && (
+                <>
+                  <span className="card__dot" />
+                  <span
+                    className="mono"
+                    title={
+                      task.tasThreshold != null
+                        ? `Нарезка ${task.pipeline}, порог ${task.tasThreshold}`
+                        : `Нарезка ${task.pipeline}`
+                    }
+                  >
+                    {PIPELINE_SHORT[task.pipeline] ?? task.pipeline}
+                    {task.tasThreshold != null ? ` · ${task.tasThreshold}` : ''}
+                  </span>
                 </>
               )}
             </div>

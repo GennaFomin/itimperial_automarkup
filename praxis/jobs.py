@@ -262,14 +262,22 @@ class ClipResult:
 
 
 def annotate_clip(
-    source: Path, meta: VideoMeta, perception: Perception, started: float | None = None
+    source: Path,
+    meta: VideoMeta,
+    perception: Perception,
+    started: float | None = None,
+    pipeline: str | None = None,
+    tas_threshold: float | None = None,
 ) -> ClipResult:
-    """Ядро разметки без веб-обвязки: используется и фоновой задачей, и пакетным прогоном."""
+    """Ядро разметки без веб-обвязки: используется и фоновой задачей, и пакетным прогоном.
+
+    `pipeline` и `tas_threshold` — настройки задания; пустые значат умолчание сервера.
+    """
     started = time.perf_counter() if started is None else started
     vocabulary = load_vocabulary(config.VOCAB_PATH)
 
     at_segment = time.perf_counter()
-    segmenter = get_segmenter(config.PIPELINE)
+    segmenter = get_segmenter(pipeline or config.PIPELINE, threshold=tas_threshold)
     result = segmenter.run(source, meta, vocabulary, perception)
     segment_sec = time.perf_counter() - at_segment
 
@@ -396,7 +404,14 @@ def process_video(video_id: str) -> None:
         decode_ms = int(round((time.perf_counter() - at_decode) * 1000))
         checkpoint("recognize")
 
-        result = annotate_clip(source, meta, perception, started)
+        result = annotate_clip(
+            source,
+            meta,
+            perception,
+            started,
+            pipeline=record.get("pipeline"),
+            tas_threshold=record.get("tas_threshold"),
+        )
         # Именование — самая долгая стадия; удалённое за это время задание не должно
         # оставить после себя ни события в журнале, ни строки с результатом.
         if gone():

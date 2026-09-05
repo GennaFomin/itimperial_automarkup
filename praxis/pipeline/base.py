@@ -58,7 +58,8 @@ class Segmenter(Protocol):
     ) -> PipelineResult: ...
 
 
-def get_segmenter(name: str) -> Segmenter:
+def get_segmenter(name: str, threshold: float | None = None) -> Segmenter:
+    """Сегментатор по имени. `threshold` понимает только детектор границ."""
     if name == "stub":
         from praxis.pipeline.stub import StubSegmenter
 
@@ -74,7 +75,7 @@ def get_segmenter(name: str) -> Segmenter:
     if name == "learned-boundaries":
         from praxis.pipeline.learned import LearnedSegmenter
 
-        return LearnedSegmenter()
+        return LearnedSegmenter(threshold=threshold)
     if name == "tw-finch":
         from praxis.pipeline.clustering import FinchSegmenter
 

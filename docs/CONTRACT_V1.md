@@ -167,8 +167,11 @@ validate`. Пайплайн проходит три — `decode`, `recognize` (�
 
 - `POST /jobs` принимает только загрузку файла. Ссылки на внешнее хранилище пайплайн
   не качает — открытый вопрос №2 контракта ещё не решён.
-- `options.vocab_version` и `options.max_segments` не поддерживаются: гранулярность
-  задаётся конфигурацией прогона, а не запросом.
+- `options.vocab_version` и `options.max_segments` не поддерживаются. Зато на задание
+  можно выбрать способ нарезки и гранулярность: поля формы `pipeline`
+  (`learned-boundaries` или `tsm-kernel`) и `tas_threshold` (0…1, только для детектора)
+  в `POST /jobs`; список и умолчания сервера отдаёт `GET /limits`, выбранное — `options`
+  в статусе задания. Неверное значение — `422 INVALID_OPTIONS`.
 - `stats.frames_decoded` не отдаётся: у пайплайна нет одного числа, которое означало бы
   ровно это. `stats` несёт `latency_ms`, `cost` и разбивку `stages_ms`.
 - `cost` вместо `cost_usd`: сумма считается по ставке `PRAXIS_GPU_HOUR_COST`, валюта

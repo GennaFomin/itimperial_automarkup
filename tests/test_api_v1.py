@@ -656,3 +656,44 @@ def test_run_deleted_during_naming_leaves_no_events(client, clips, monkeypatch):
     assert store.get_video(job_id) is None
     assert store.events(job_id) == []
     assert not (config.WORK_DIR / job_id).exists()
+
+
+def test_job_options_choose_the_segmenter_per_task(client, clips):
+    """Способ нарезки — настройка задания, а не сервера: сервер стоит на stub,
+    а задание просит ядровой change-point и получает именно его."""
+    with clips["ok"].open("rb") as handle:
+        response = client.post(
+            "/api/v1/jobs",
+            files={"file": ("ok.mp4", handle, "video/mp4")},
+            data={"pipeline": "tsm-kernel", "tas_threshold": "0.95"},
+        )
+    assert response.status_code == 202, response.text
+    job_id = response.json()["job_id"]
+    job = wait_done(client, job_id)
+    assert job["options"] == {"pipeline": "tsm-kernel", "tas_threshold": 0.95}
+    prediction = client.get(f"/api/v1/jobs/{job_id}/prediction").json()
+    assert prediction["model_version"].startswith("tsm-kernel")
+
+    # Без настроек — умолчание сервера, и это видно в ответе.
+    plain = upload(client, clips["ok"])
+    assert client.get(f"/api/v1/jobs/{plain}").json()["options"] == {
+        "pipeline": None,
+        "tas_threshold": None,
+    }
+
+
+def test_job_options_are_validated(client, clips):
+    for data in ({"pipeline": "magic"}, {"tas_threshold": "1.5"}, {"tas_threshold": "0"}):
+        with clips["ok"].open("rb") as handle:
+            response = client.post(
+                "/api/v1/jobs", files={"file": ("ok.mp4", handle, "video/mp4")}, data=data
+            )
+        assert response.status_code == 422, data
+        assert response.json()["error"]["code"] == "INVALID_OPTIONS"
+
+
+def test_limits_list_the_pipelines_and_defaults(client):
+    limits = client.get("/api/v1/limits").json()
+    assert {p["id"] for p in limits["pipelines"]} == {"learned-boundaries", "tsm-kernel"}
+    assert limits["pipeline_default"] == config.PIPELINE
+    assert 0 < limits["tas_threshold_default"] < 1

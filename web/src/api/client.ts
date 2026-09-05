@@ -95,6 +95,9 @@ export interface CreateJobInput {
   scenario?: string
   /** Длительность загруженного ролика, чтобы мок растянул фикстуру под него. */
   durationMs?: number | null
+  /** Способ нарезки и порог детектора; пусто — умолчание сервера. */
+  pipeline?: string | null
+  tasThreshold?: number | null
 }
 
 export async function createJob(input: CreateJobInput): Promise<{ job_id: string }> {
@@ -105,6 +108,8 @@ export async function createJob(input: CreateJobInput): Promise<{ job_id: string
   }
   const form = new FormData()
   form.append('file', input.file)
+  if (input.pipeline) form.append('pipeline', input.pipeline)
+  if (input.tasThreshold != null) form.append('tas_threshold', String(input.tasThreshold))
   return request(`${V1}/jobs`, { method: 'POST', body: form })
 }
 

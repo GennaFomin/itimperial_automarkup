@@ -181,7 +181,14 @@ def activity_segments(
 
 @dataclass
 class LearnedSegmenter:
-    """Нарезка по вероятностям обучаемого детектора границ."""
+    """Нарезка по вероятностям обучаемого детектора границ.
+
+    Порог — гранулярность: 0.5 для атомарных действий, 0.95 для крупных шагов.
+    Задаётся на уровне задания; без него берётся умолчание конфигурации.
+    """
+
+    def __init__(self, threshold: float | None = None) -> None:
+        self.threshold = threshold
 
     @property
     def name(self) -> str:
@@ -218,6 +225,7 @@ class LearnedSegmenter:
         except (urllib.error.URLError, OSError, TimeoutError, ValueError, KeyError) as error:
             return self._fallback(video_path, meta, vocabulary, perception, f"недоступен: {error}")
 
+        threshold = config.TAS_THRESHOLD if self.threshold is None else self.threshold
         minimum = max(1, int(config.TAS_PEAK_GAP_SEC * perception.fps))
         gaps = None
         if config.IDLE_MODE == "activity" and config.GAP_BASE_URL:
@@ -227,13 +235,13 @@ class LearnedSegmenter:
                 gaps = None  # без детектора пауз остаётся неподвижность по полосе движения
         if config.IDLE_MODE == "activity":
             segments = activity_segments(
-                scores, perception.motion, perception.fps, config.TAS_THRESHOLD, minimum,
+                scores, perception.motion, perception.fps, threshold, minimum,
                 config.TAS_PROMINENCE, config.ACTIVITY_LEVEL, config.ACTIVITY_LOW,
                 config.ACTIVITY_SMOOTH_SEC, config.ACTIVITY_CLOSE_SEC,
                 gaps, config.GAP_THRESHOLD, config.GAP_MIN_SEC,
             )
         else:
-            cuts = peaks_above(scores, config.TAS_THRESHOLD, minimum, config.TAS_PROMINENCE)
+            cuts = peaks_above(scores, threshold, minimum, config.TAS_PROMINENCE)
             edges = [0, *cuts, len(scores)]
             segments = list(zip(edges, edges[1:]))
 

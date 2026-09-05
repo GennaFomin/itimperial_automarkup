@@ -49,6 +49,13 @@ export interface Job {
   error: ApiError['error'] | null
   /** Имя загруженного файла: сервер отдаёт его и в статусе, и в списке. */
   filename?: string
+  /** Настройки прогона этого задания; null — умолчание сервера. */
+  options?: JobOptions
+}
+
+export interface JobOptions {
+  pipeline: string | null
+  tas_threshold: number | null
 }
 
 export interface ApiError {
@@ -181,6 +188,10 @@ export interface Limits {
   min_height: number
   allowed_extensions: string[]
   job_timeout_ms: number
+  /** Способы нарезки, доступные на задание, и что будет без выбора. */
+  pipelines?: Array<{ id: string; label: string }>
+  pipeline_default?: string
+  tas_threshold_default?: number
 }
 
 export interface Stats {
