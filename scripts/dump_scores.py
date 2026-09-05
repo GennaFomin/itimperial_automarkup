@@ -35,7 +35,7 @@ def main() -> None:
             continue
         # Признаки из кэша, без декодирования серых кадров: полоса движения нужна
         # только моделям с каналом движения.
-        video = jobs._video_features(clip)
+        video = jobs.video_features(clip)
         if video is None:
             print(f"  нет признаков: {clip.name}")
             continue

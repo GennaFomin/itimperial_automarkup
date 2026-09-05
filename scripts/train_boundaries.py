@@ -65,7 +65,7 @@ def main() -> None:
         # Не perceive: тот сначала декодирует весь ролик в серые кадры ради полосы
         # движения для таймлайна, а обучению нужны только признаки энкодера. На шести
         # сотнях роликов это разница между двадцатью минутами и двумя с половиной часами.
-        video = jobs._video_features(source)
+        video = jobs.video_features(source)
         if video is None:
             print(f"  пропуск без признаков: {source.name}")
             continue
