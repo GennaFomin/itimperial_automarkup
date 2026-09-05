@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useEditorStore } from '../store/editorStore'
 import { formatPrecise, parseTimecode } from '../lib/time'
+import { frequentValues, objectsForAction } from '../lib/vocab'
+import { LabelPicker } from './LabelPicker'
 import type { VocabAction, VocabObject } from '../api/types'
 
 interface Props {
@@ -30,8 +32,18 @@ export function SegmentInspector({ actions, objects, onSeek }: Props) {
   const applySplit = useEditorStore((s) => s.applySplit)
   const zoomToSegment = useEditorStore((s) => s.zoomToSegment)
   const openVocabulary = useEditorStore((s) => s.vocab?.open ?? false)
+  const pairs = useEditorStore((s) => s.vocab?.pairs)
 
   const seg = segments.find((s) => s.id === selectedId) ?? null
+  // Частые значения ролика — то, что реально нужно под рукой при десятках классов.
+  const frequentActions = useMemo(() => frequentValues(segments, 'action'), [segments])
+  const frequentObjects = useMemo(() => frequentValues(segments, 'object'), [segments])
+  const allowedObjects = useMemo(
+    () => (seg ? objectsForAction(objects, pairs, seg.action, [seg.object, 'unknown']) : objects),
+    [objects, pairs, seg],
+  )
+  const actionOption = seg ? actions.find((a) => a.id === seg.action) : undefined
+  const objectOption = seg ? objects.find((o) => o.id === seg.object) : undefined
   const index = seg ? segments.findIndex((s) => s.id === seg.id) : -1
   const isLast = index === segments.length - 1
 
@@ -75,50 +87,41 @@ export function SegmentInspector({ actions, objects, onSeek }: Props) {
       )}
 
       <div>
-        <div className="insp__section-label">Действие</div>
-        {openVocabulary && (
-          <FreeText
-            value={seg.action}
-            placeholder="любое действие, например: повернул бутылку"
-            onCommit={(value) => applyUpdate(seg.id, { action: value })}
-          />
-        )}
-        <div className="opts">
-          {actions.map((a, i) => (
-            <button
-              key={a.id}
-              className={`opt${a.id === seg.action ? ' opt--on' : ''}`}
-              onClick={() => applyUpdate(seg.id, { action: a.id })}
-            >
-              <span className="chip__dot" style={{ background: a.color }} />
-              {a.label_ru}
-              {i < 9 && <span className="opt__key">{i + 1}</span>}
-            </button>
-          ))}
+        <div className="insp__section-label">
+          Действие
+          {!openVocabulary && actionOption?.unknown && (
+            <span className="insp__oov" title="Такого действия нет в словаре задачи">вне словаря</span>
+          )}
         </div>
+        <LabelPicker
+          key={`a-${seg.id}`}
+          options={actions}
+          value={seg.action}
+          onChange={(id) => applyUpdate(seg.id, { action: id })}
+          allowFree={openVocabulary}
+          frequent={frequentActions}
+          hotkeys
+          placeholder={openVocabulary ? 'любое действие, например: повернул' : 'найти действие'}
+        />
         <Confidence value={seg.action_confidence} edited={seg.edited} />
       </div>
 
       <div>
-        <div className="insp__section-label">Объект</div>
-        {openVocabulary && (
-          <FreeText
-            value={seg.object === 'unknown' ? '' : seg.object}
-            placeholder="любой объект, например: бутылка"
-            onCommit={(value) => applyUpdate(seg.id, { object: value })}
-          />
-        )}
-        <div className="opts">
-          {objects.map((o) => (
-            <button
-              key={o.id}
-              className={`opt${o.id === seg.object ? ' opt--on' : ''}`}
-              onClick={() => applyUpdate(seg.id, { object: o.id })}
-            >
-              {o.label_ru}
-            </button>
-          ))}
+        <div className="insp__section-label">
+          Объект
+          {!openVocabulary && objectOption?.unknown && (
+            <span className="insp__oov" title="Такого объекта нет в словаре задачи">вне словаря</span>
+          )}
         </div>
+        <LabelPicker
+          key={`o-${seg.id}`}
+          options={allowedObjects}
+          value={seg.object}
+          onChange={(id) => applyUpdate(seg.id, { object: id })}
+          allowFree={openVocabulary}
+          frequent={frequentObjects}
+          placeholder={openVocabulary ? 'любой объект, например: бутылка' : 'найти объект'}
+        />
         <Confidence value={seg.object_confidence} edited={seg.edited} />
       </div>
 
@@ -281,44 +284,3 @@ function TimeField({
     </div>
   )
 }
-
-/**
- * Свободный ввод метки при открытом словаре.
- *
- * Модель отвечает своими словами, и её метки в списке кнопок нет — кнопки остаются
- * быстрыми подсказками, а исправить или вписать своё можно только текстом. Пустой ввод
- * ничего не меняет: удаление метки — это не правка, а её отсутствие.
- */
-function FreeText({
-  value,
-  placeholder,
-  onCommit,
-}: {
-  value: string
-  placeholder: string
-  onCommit: (value: string) => void
-}) {
-  const [text, setText] = useState(value)
-  useEffect(() => setText(value), [value])
-  const commit = () => {
-    const next = text.trim()
-    if (next && next !== value) onCommit(next)
-  }
-  return (
-    <input
-      className="input"
-      style={{ width: '100%', marginBottom: 6 }}
-      value={text}
-      placeholder={placeholder}
-      onChange={(e) => setText(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault()
-          ;(e.target as HTMLInputElement).blur()
-        }
-      }}
-    />
-  )
-}
-

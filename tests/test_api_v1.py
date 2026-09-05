@@ -531,6 +531,8 @@ def test_review_accepts_free_labels_when_vocabulary_is_open(client, clips, monke
               "segments": segments, "time_spent_ms": 1000},
     )
     assert response.status_code == 200, response.text
+    # Свободная метка при открытой лексике — норма, а не замечание к разметке.
+    assert response.json()["problems"] == []
 
     saved = Annotation.model_validate_json(store.get_video(job_id)["review"])
     assert saved.steps[0].action == "повернул бутылку"
@@ -538,3 +540,97 @@ def test_review_accepts_free_labels_when_vocabulary_is_open(client, clips, monke
     exported = client.get(f"/api/v1/jobs/{job_id}/export?format=json").json()
     assert exported["steps"][0]["action"] == "повернул бутылку"
 
+
+
+def test_vocab_version_is_the_same_tag_in_vocab_and_prediction(client, clips):
+    """Раньше /vocab отдавал номер, а прогноз — имя словаря: сверить их было нельзя."""
+    job_id = upload(client, clips["ok"])
+    wait_done(client, job_id)
+    prediction = client.get(f"/api/v1/jobs/{job_id}/prediction").json()
+    vocab = client.get("/api/v1/vocab").json()
+    assert vocab["version"] == prediction["vocab_version"]
+    assert "@v" in vocab["version"]
+
+
+def test_delete_removes_record_events_files_and_feature_cache(client, clips):
+    from praxis import jobs
+
+    job_id = upload(client, clips["ok"])
+    wait_done(client, job_id)
+    assert client.get(f"/api/v1/jobs/{job_id}/frame?ms=1000").status_code == 200
+    directory = config.WORK_DIR / job_id
+    assert (directory / "frames").exists()
+    cache = jobs._feature_cache_path(directory / "source.mp4")
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_bytes(b"stale")
+
+    response = client.delete(f"/api/v1/jobs/{job_id}")
+    assert response.status_code == 200, response.text
+    assert response.json() == {"job_id": job_id, "deleted": True}
+
+    assert client.get(f"/api/v1/jobs/{job_id}").status_code == 404
+    assert store.get_video(job_id) is None
+    assert store.events(job_id) == []
+    assert not directory.exists()
+    assert not cache.exists()
+    assert all(job["job_id"] != job_id for job in client.get("/api/v1/jobs").json())
+
+    # Повторное удаление идемпотентно и не воскрешает папку.
+    again = client.delete(f"/api/v1/jobs/{job_id}")
+    assert again.status_code == 200
+    assert again.json()["deleted"] is False
+    assert not directory.exists()
+
+
+def test_run_aborts_cleanly_when_job_is_deleted_midway(client, clips, monkeypatch):
+    """Фоновую задачу нельзя убить извне: удалённое по дороге задание должно само
+    заметить пропавшую запись и не оставить ни строк в журнале, ни файлов."""
+    from praxis import jobs
+
+    job_id = "deleted-midway"
+    meta = jobs.prepare_upload(job_id, "ok.mp4", clips["ok"].read_bytes())
+    store.create_video(job_id, "ok.mp4", meta)
+    directory = config.WORK_DIR / job_id
+    real_perceive = jobs.perceive
+
+    def perceive_then_vanish(source):
+        perception = real_perceive(source)
+        jobs.delete_video(job_id)
+        return perception
+
+    monkeypatch.setattr(jobs, "perceive", perceive_then_vanish)
+    jobs.process_video(job_id)
+
+    assert store.get_video(job_id) is None
+    assert store.events(job_id) == []
+    assert not directory.exists()
+
+
+def test_portrait_clip_keeps_its_orientation_and_frames_are_capped(client, tmp_path):
+    import subprocess
+
+    clip = make_video(tmp_path / "portrait.mp4", seconds=5, size="720x1280")
+    job_id = upload(client, clip)
+    wait_done(client, job_id)
+    prediction = client.get(f"/api/v1/jobs/{job_id}/prediction").json()
+    assert (prediction["video"]["width"], prediction["video"]["height"]) == (720, 1280)
+
+    assert client.get(f"/api/v1/jobs/{job_id}/frame?ms=1000").status_code == 200
+    frame = config.WORK_DIR / job_id / "frames" / "t_000001000.jpg"
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+         "stream=width,height", "-of", "csv=p=0", str(frame)],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip().split(",")
+    width, height = int(probe[0]), int(probe[1])
+    assert height > width, "портретный кадр остался портретным"
+    assert max(width, height) <= 640, "длинная сторона ограничена, а не ширина"
+
+
+def test_low_resolution_is_judged_by_the_short_side(client, tmp_path):
+    """540×960 — это не «960p», а такой же маленький ролик, как 960×540."""
+    clip = make_video(tmp_path / "small_portrait.mp4", seconds=3, size="540x960")
+    with clip.open("rb") as handle:
+        response = client.post("/api/v1/jobs", files={"file": (clip.name, handle, "video/mp4")})
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "VIDEO_TOO_SMALL"

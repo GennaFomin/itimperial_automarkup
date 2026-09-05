@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import shutil
 import tempfile
 import time
 import traceback
@@ -288,7 +289,7 @@ def annotate_clip(
             # Имя того, кто реально резал: при откате детектора на ядровой метод
             # версия модели в экспорте обязана сказать «tsm-kernel», а не имя настройки.
             pipeline=result.models.get("segmenter", segmenter.name),
-            vocabulary=vocabulary.name,
+            vocabulary=vocabulary.version_tag,
             models={**result.models, **named.models},
             backend=config.VLM_BASE_URL or "local",
             processing_sec=round(elapsed, 3),
@@ -334,13 +335,26 @@ def process_video(video_id: str) -> None:
                 f"прогон превысил {config.JOB_TIMEOUT_SEC:.0f} с на стадии «{stage}»"
             )
         current = store.get_video(video_id)
-        if current is not None and _cancelled(current):
+        # Пропавшая запись — задание удалили во время прогона: это та же отмена.
+        if current is None or _cancelled(current):
             raise Cancelled(f"обработка отменена на стадии «{stage}»")
         store.update_video(video_id, stage=stage)
 
+    directory = store.video_path(video_id)
+    source = directory / "source.mp4"
+    # Ключ кэша признаков зависит от размера исходника, поэтому считается, пока файл
+    # точно есть: после удаления задания посчитать его уже нельзя, и кэш осиротел бы.
+    feature_cache = _feature_cache_path(source) if source.exists() else None
+
+    def gone() -> bool:
+        """Задание удалили, пока оно считалось: ничего не писать, убрать следы."""
+        if store.get_video(video_id) is not None:
+            return False
+        _remove_artifacts(directory, feature_cache)
+        return True
+
     try:
         directory = store.video_dir(video_id)
-        source = directory / "source.mp4"
         meta = VideoMeta(
             id=video_id,
             filename=record["filename"],
@@ -380,6 +394,8 @@ def process_video(video_id: str) -> None:
             },
         )
 
+        if gone():
+            return
         store.update_video(
             video_id,
             status="done",
@@ -393,6 +409,8 @@ def process_video(video_id: str) -> None:
             finished_at=store.now(),
         )
     except Cancelled as cancelled:
+        if gone():
+            return
         store.update_video(
             video_id,
             status="cancelled",
@@ -403,6 +421,8 @@ def process_video(video_id: str) -> None:
         )
         store.log_event(video_id, "cancel", {"message": str(cancelled)})
     except Exception as error:  # noqa: BLE001 — статус задачи важнее типа ошибки
+        if gone():
+            return
         message = f"{error}\n{traceback.format_exc(limit=3)}"
         store.update_video(
             video_id,
@@ -420,6 +440,31 @@ def process_video(video_id: str) -> None:
                 "error": str(error),
             },
         )
+
+
+def _remove_artifacts(directory: Path, feature_cache: Path | None) -> None:
+    """Снести всё, что задание оставило на диске: папку с видео и кадрами и кэш признаков."""
+    shutil.rmtree(directory, ignore_errors=True)
+    if feature_cache is not None:
+        feature_cache.unlink(missing_ok=True)
+
+
+def delete_video(video_id: str) -> bool:
+    """Удалить задание целиком: запись, журнал, файлы, кэш признаков.
+
+    Идущему прогону сначала ставится отмена, затем запись удаляется — на следующей
+    контрольной точке он увидит пропавшую строку и сам уберёт то, что успел записать.
+    Возвращает, существовало ли задание.
+    """
+    directory = store.video_path(video_id)
+    source = directory / "source.mp4"
+    feature_cache = _feature_cache_path(source) if source.exists() else None
+    existed = store.get_video(video_id) is not None
+    if existed:
+        store.update_video(video_id, cancel_requested=1)
+        store.delete_video(video_id)
+    _remove_artifacts(directory, feature_cache)
+    return existed
 
 
 def prepare_upload(video_id: str, filename: str, raw: bytes) -> dict:
@@ -445,11 +490,14 @@ def prepare_upload(video_id: str, filename: str, raw: bytes) -> dict:
             duration_ms=round(meta["duration_sec"] * 1000),
             limit_ms=round(config.MAX_DURATION_SEC * 1000),
         )
-    if meta["height"] < config.MIN_HEIGHT:
+    # Порог — по короткой стороне: вертикальный ролик 720×1280 такой же «720p»,
+    # как горизонтальный 1280×720, а 540×960 не проходит в обеих ориентациях.
+    short_side = min(meta["width"], meta["height"])
+    if short_side < config.MIN_HEIGHT:
         raise UploadRejected(
             errors.VIDEO_TOO_SMALL,
-            f"нужно не меньше {config.MIN_HEIGHT}p (получено {meta['height']}p)",
-            height=meta["height"],
+            f"нужно не меньше {config.MIN_HEIGHT}p (получено {short_side}p)",
+            height=short_side,
             min_height=config.MIN_HEIGHT,
         )
     return meta

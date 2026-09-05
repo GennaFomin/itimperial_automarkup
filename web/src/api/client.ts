@@ -148,6 +148,12 @@ export async function cancelJob(jobId: string): Promise<void> {
   await request(`${V1}/jobs/${jobId}/cancel`, { method: 'POST' })
 }
 
+/** Удалить задачу целиком: запись, видео, кадры. Идемпотентно, как и отмена. */
+export async function deleteJob(jobId: string): Promise<void> {
+  if (USING_MOCK) return (await useMock()).deleteJob(jobId)
+  await request(`${V1}/jobs/${jobId}`, { method: 'DELETE' })
+}
+
 export async function getVocab(): Promise<Vocabulary> {
   if (USING_MOCK) return (await useMock()).getVocab()
   return request(`${V1}/vocab`)

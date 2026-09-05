@@ -319,6 +319,17 @@ async def cancel_job(job_id: str) -> dict:
 # ------------------------------------------------------------------ словарь и метрики
 
 
+@router.delete("/jobs/{job_id}")
+async def delete_job(job_id: str) -> dict:
+    """Удалить задание: запись, журнал, видео, кадры, кэш признаков.
+
+    Идемпотентно, как и отмена (§2): повторное удаление — не ошибка. Идущее задание
+    удаляется тоже — прогон получает отмену и сам убирает свои следы.
+    """
+    existed = jobs.delete_video(job_id)
+    return {"job_id": job_id, "deleted": existed}
+
+
 @router.get("/vocab")
 async def get_vocab() -> dict:
     return contract_v1.to_vocab_doc(load_vocabulary(config.VOCAB_PATH))

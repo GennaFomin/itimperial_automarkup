@@ -11,7 +11,7 @@
  * название при перезагрузке не стоит.
  */
 import { create } from 'zustand'
-import { listJobs } from '../api/client'
+import { cancelJob, deleteJob, listJobs } from '../api/client'
 import type { JobStatus, JobSummary } from '../api/types'
 
 export interface Task {
@@ -66,6 +66,10 @@ interface TasksState {
   refresh: () => Promise<void>
   setTitle: (jobId: string, title: string) => void
   getTask: (jobId: string) => Task | undefined
+  /** Отменить идущую обработку; карточка обновится с сервера. */
+  cancel: (jobId: string) => Promise<void>
+  /** Удалить задачу на сервере и убрать её из списка вместе с локальным названием. */
+  remove: (jobId: string) => Promise<void>
 }
 
 export const useTasksStore = create<TasksState>((set, get) => ({
@@ -98,4 +102,19 @@ export const useTasksStore = create<TasksState>((set, get) => ({
     }),
 
   getTask: (jobId) => get().tasks.find((task) => task.job_id === jobId),
+
+  cancel: async (jobId) => {
+    await cancelJob(jobId)
+    await get().refresh()
+  },
+
+  remove: async (jobId) => {
+    await deleteJob(jobId)
+    set((state) => {
+      const titles = { ...state.titles }
+      delete titles[jobId]
+      persistTitles(titles)
+      return { titles, tasks: state.tasks.filter((task) => task.job_id !== jobId) }
+    })
+  },
 }))

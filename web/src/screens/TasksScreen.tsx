@@ -4,11 +4,33 @@ import { USING_MOCK, getStats } from '../api/client'
 import { STATUS_LABEL, type JobStatus, type Stats } from '../api/types'
 import { formatDuration } from '../lib/time'
 import { useTasksStore, type Task } from '../store/tasksStore'
+import { toast } from '../store/toastStore'
 import { CreateTaskDialog } from './CreateTaskDialog'
 import './TasksScreen.css'
 
 /** Пока в очереди есть задачи, список опрашивается — как требует контракт §2. */
 const POLL_MS = 2000
+
+type Filter = 'all' | 'running' | 'ready' | 'failed'
+const FILTERS: Array<{ id: Filter; label: string }> = [
+  { id: 'all', label: 'Все' },
+  { id: 'running', label: 'В работе' },
+  { id: 'ready', label: 'Готовые' },
+  { id: 'failed', label: 'Ошибки' },
+]
+
+function matches(task: Task, filter: Filter): boolean {
+  switch (filter) {
+    case 'running':
+      return task.status === 'queued' || task.status === 'running'
+    case 'ready':
+      return task.status === 'done' || task.status === 'done_with_errors'
+    case 'failed':
+      return task.status === 'failed' || task.status === 'cancelled'
+    default:
+      return true
+  }
+}
 
 export function TasksScreen() {
   const tasks = useTasksStore((s) => s.tasks)
@@ -16,13 +38,24 @@ export function TasksScreen() {
   const refresh = useTasksStore((s) => s.refresh)
   const [creating, setCreating] = useState(false)
   const [stats, setStats] = useState<Stats | null>(null)
+  const [filter, setFilter] = useState<Filter>('all')
 
   const pending = tasks.some((task) => task.status === 'queued' || task.status === 'running')
+  // Число проверенных задач — сигнал, что статистика ускорения могла измениться.
+  const reviewedCount = tasks.filter((task) => task.reviewed).length
 
   useEffect(() => {
     void refresh()
-    void getStats().then(setStats).catch(() => setStats(null))
   }, [refresh])
+
+  useEffect(() => {
+    const load = () => void getStats().then(setStats).catch(() => setStats(null))
+    load()
+    window.addEventListener('focus', load)
+    return () => window.removeEventListener('focus', load)
+  }, [reviewedCount])
+
+  const shown = tasks.filter((task) => matches(task, filter))
 
   // Один запрос на весь список вместо отдельного поллинга на каждую карточку.
   useEffect(() => {
@@ -54,9 +87,26 @@ export function TasksScreen() {
             <div className="tasks__count">
               {tasks.length === 0
                 ? 'Пока пусто'
-                : `${tasks.length} ${plural(tasks.length, 'задача', 'задачи', 'задач')}`}
+                : `${shown.length} ${plural(shown.length, 'задача', 'задачи', 'задач')}`}
             </div>
           </div>
+          {tasks.length > 0 && (
+            <div className="tasks__filters">
+              {FILTERS.map((f) => {
+                const count = tasks.filter((task) => matches(task, f.id)).length
+                return (
+                  <button
+                    key={f.id}
+                    className={`chip tasks__filter${filter === f.id ? ' tasks__filter--on' : ''}`}
+                    onClick={() => setFilter(f.id)}
+                  >
+                    {f.label}
+                    <span className="mono" style={{ color: 'var(--text-dim)' }}>{count}</span>
+                  </button>
+                )
+              })}
+            </div>
+          )}
         </div>
 
         {error && <div className="banner banner--err">⚠ {error}</div>}
@@ -69,9 +119,13 @@ export function TasksScreen() {
               Создать задачу
             </button>
           </div>
+        ) : shown.length === 0 ? (
+          <div className="empty">
+            <div className="empty__title">Нет задач с таким статусом</div>
+          </div>
         ) : (
           <div className="tasks__grid">
-            {tasks.map((task) => (
+            {shown.map((task) => (
               <TaskCard key={task.job_id} task={task} />
             ))}
           </div>
@@ -121,8 +175,34 @@ function Speedup({ stats }: { stats: Stats }) {
 
 function TaskCard({ task }: { task: Task }) {
   const navigate = useNavigate()
+  const remove = useTasksStore((s) => s.remove)
+  const cancel = useTasksStore((s) => s.cancel)
+  const [confirming, setConfirming] = useState(false)
+  const [busy, setBusy] = useState(false)
   const ready = task.status === 'done' || task.status === 'done_with_errors'
   const running = task.status === 'queued' || task.status === 'running'
+
+  const onDelete = async () => {
+    setBusy(true)
+    try {
+      await remove(task.job_id)
+    } catch (e) {
+      toast.error('Не удалось удалить задачу', [e instanceof Error ? e.message : String(e)])
+      setBusy(false)
+      setConfirming(false)
+    }
+  }
+
+  const onCancel = async () => {
+    setBusy(true)
+    try {
+      await cancel(task.job_id)
+    } catch (e) {
+      toast.error('Не удалось отменить обработку', [e instanceof Error ? e.message : String(e)])
+    } finally {
+      setBusy(false)
+    }
+  }
 
   return (
     <article className={`card${ready ? '' : ' card--disabled'}`}>
@@ -160,25 +240,54 @@ function TaskCard({ task }: { task: Task }) {
       )}
 
       <div className="card__foot">
-        <StatusBadge status={task.status} progress={task.progress} />
-        <div style={{ display: 'flex', gap: 6 }}>
-          {ready && (
-            <button
-              className="btn btn--sm"
-              title="Замер: разметить этот ролик с нуля, без подсказки модели"
-              onClick={() => navigate(`/task/${task.job_id}?mode=scratch`)}
-            >
-              С нуля
+        {confirming ? (
+          // Подтверждение прямо на карточке: удаление стирает прогон на минуты GPU,
+          // одно случайное нажатие не должно его стоить.
+          <div className="card__confirm">
+            <span>Удалить задачу и её файлы?</span>
+            <button className="btn btn--sm btn--danger" disabled={busy} onClick={() => void onDelete()}>
+              {busy ? 'Удаляем…' : 'Да, удалить'}
             </button>
-          )}
-          <button
-            className="btn btn--sm"
-            disabled={!ready}
-            onClick={() => navigate(`/task/${task.job_id}`)}
-          >
-            {ready ? 'Открыть разметку' : 'Ждём авторазметку'}
-          </button>
-        </div>
+            <button className="btn btn--sm btn--ghost" disabled={busy} onClick={() => setConfirming(false)}>
+              Отмена
+            </button>
+          </div>
+        ) : (
+          <>
+            <StatusBadge status={task.status} progress={task.progress} />
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                className="btn btn--sm btn--ghost card__delete"
+                title="Удалить задачу"
+                aria-label="Удалить задачу"
+                onClick={() => setConfirming(true)}
+              >
+                🗑
+              </button>
+              {running && (
+                <button className="btn btn--sm btn--danger" disabled={busy} onClick={() => void onCancel()}>
+                  Отменить
+                </button>
+              )}
+              {ready && (
+                <button
+                  className="btn btn--sm"
+                  title="Замер: разметить этот ролик с нуля, без подсказки модели"
+                  onClick={() => navigate(`/task/${task.job_id}?mode=scratch`)}
+                >
+                  С нуля
+                </button>
+              )}
+              <button
+                className="btn btn--sm"
+                disabled={!ready}
+                onClick={() => navigate(`/task/${task.job_id}`)}
+              >
+                {ready ? 'Открыть разметку' : 'Ждём авторазметку'}
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </article>
   )

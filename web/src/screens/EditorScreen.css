@@ -1,21 +1,36 @@
-.ed { display: grid; grid-template-rows: auto 1fr; height: 100vh; overflow: hidden; }
+/* Три строки: шапка, баннеры (могут быть пустыми), рабочая область. Остаток высоты
+   всегда достаётся рабочей области — раньше любой баннер сталкивал её в неявную
+   строку, и видео с таймлайном обрезались по краю экрана. */
+.ed { display: grid; grid-template-rows: auto auto minmax(0, 1fr); height: 100vh; overflow: hidden; }
+.ed__banners { display: flex; flex-direction: column; max-height: 30vh; overflow-y: auto; }
 
 .ed__top {
   display: flex; align-items: center; gap: 14px;
   padding: 10px 16px; background: var(--surface); border-bottom: 1px solid var(--line);
-  flex: none; flex-wrap: wrap;
+  flex: none; flex-wrap: nowrap;
 }
 .ed__back { display: inline-flex; align-items: center; gap: 7px; }
 .ed__titles { min-width: 0; }
-.ed__title { font-size: 14.5px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px; }
+.ed__title { font-size: 14.5px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: clamp(120px, 18vw, 320px); }
 .ed__sub { font-size: 11.5px; color: var(--text-dim); font-family: var(--mono); }
 
-.ed__stats { display: flex; gap: 16px; margin-left: 10px; flex-wrap: wrap; }
-.ed__stat { display: flex; flex-direction: column; }
+.ed__stats { display: flex; gap: 14px; margin-left: 10px; flex-wrap: nowrap; overflow: hidden; min-width: 0; }
+.ed__stat { display: flex; align-items: baseline; gap: 5px; white-space: nowrap; cursor: default; }
 .ed__stat-val { font-size: 13px; font-weight: 650; font-family: var(--mono); }
 .ed__stat-key { font-size: 10.5px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; }
+.ed__stat--pop { position: relative; }
+.ed__stat-btn { display: flex; align-items: baseline; gap: 5px; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.ed__stat-btn:hover .ed__stat-key { color: var(--text-muted); }
+.ed__pop { left: 0; right: auto; max-height: 320px; overflow-y: auto; }
+.ed__pop .menu__item { gap: 8px; }
 
-.ed__right { margin-left: auto; display: flex; gap: 7px; align-items: center; }
+.ed__right { margin-left: auto; display: flex; gap: 7px; align-items: center; flex: none; }
+.ed__secondary { display: flex; gap: 7px; }
+.ed__more { display: none; }
+@media (max-width: 1280px) {
+  .ed__secondary { display: none; }
+  .ed__more { display: block; }
+}
 
 .ed__main { display: grid; grid-template-columns: minmax(0, 1fr) 372px; min-height: 0; }
 .ed__left { display: grid; grid-template-rows: minmax(0, 1fr) auto; min-height: 0; min-width: 0; }
@@ -27,6 +42,13 @@
 }
 .banner--warn { background: rgb(242 193 78 / 10%); color: var(--warn); }
 .banner--err { background: rgb(242 85 90 / 10%); color: #ffb3b6; }
+.banner--list { flex-wrap: wrap; row-gap: 4px; }
+.banner__link {
+  padding: 2px 8px; border-radius: 99px; font-size: 12px; cursor: pointer;
+  border: 1px solid rgb(242 85 90 / 40%); background: transparent; color: inherit;
+}
+.banner__link:hover:not(:disabled) { border-color: var(--danger); background: rgb(242 85 90 / 12%); }
+.banner__link:disabled { cursor: default; opacity: 0.8; }
 
 .ed__loading {
   height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;

@@ -199,6 +199,24 @@ class HttpNamer:
                 encoded.append(base64.b64encode(path.read_bytes()).decode())
         return encoded
 
+    def _unavailable(self) -> str | None:
+        """Причина, по которой сервис не ответил на /health, либо None, если он жив.
+
+        Кадры для запроса режутся заранее и дорого, поэтому недоступность надо
+        узнать до нарезки, а не после. Любой HTTP-ответ, даже 404, значит, что
+        сервис поднят: у старых сборок пути /health могло не быть.
+        """
+        try:
+            with urllib.request.urlopen(
+                self.base_url + "/health", timeout=config.VLM_HEALTH_TIMEOUT
+            ) as response:
+                response.read()
+        except urllib.error.HTTPError:
+            return None
+        except (urllib.error.URLError, OSError, TimeoutError, ValueError) as error:
+            return f"недоступен: {error}"
+        return None
+
     def _post(self, path: str, payload: dict, base_url: str | None = None) -> dict:
         request = urllib.request.Request(
             (base_url.rstrip("/") if base_url else self.base_url) + path,
@@ -225,6 +243,8 @@ class RemoteVlmNamer(HttpNamer):
     ) -> NamingResult:
         if not steps:
             return NamingResult(steps=steps, models={"namer": "vlm", "namer_status": "нет шагов"})
+        if reason := self._unavailable():
+            return NamingResult(steps=steps, models={"namer": "vlm", "namer_status": reason})
 
         # Область предмета от трекера, если он поднят: кадры для каждого шага режутся по
         # своей рамке, а не по общей рабочей зоне. Языковая модель тогда смотрит на предмет
@@ -397,6 +417,8 @@ class ClipNamer(HttpNamer):
     ) -> NamingResult:
         if not steps:
             return NamingResult(steps=steps, models={"namer": self.name, "namer_status": "нет шагов"})
+        if reason := self._unavailable():
+            return NamingResult(steps=steps, models={"namer": self.name, "namer_status": reason})
 
         pairs = (
             [[action, obj] for action, objects in vocabulary.pairs.items() for obj in objects]

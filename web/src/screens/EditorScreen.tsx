@@ -13,6 +13,7 @@ import {
   saveReview,
 } from '../api/client'
 import { JOB_STAGES, STAGE_LABEL, type Job, type Prediction, type VocabAction, type VocabObject } from '../api/types'
+import { Menu } from '../components/Menu'
 import { Timeline } from '../components/Timeline'
 import { VideoStage, type VideoHandle } from '../components/VideoStage'
 import { KeyframePanel } from '../components/KeyframePanel'
@@ -21,8 +22,10 @@ import { buildExportCsv, buildExportJson, buildReview, download } from '../lib/e
 import { coverage, diffAgainstPrediction, validate, verifiedCount } from '../lib/segments'
 import { formatDuration } from '../lib/time'
 import { useActivityTimer } from '../lib/useActivityTimer'
+import { mergeVocab, outOfVocab } from '../lib/vocab'
 import { useEditorStore } from '../store/editorStore'
 import { useTasksStore } from '../store/tasksStore'
+import { toast } from '../store/toastStore'
 import '../components/SidePanel.css'
 import './EditorScreen.css'
 
@@ -30,7 +33,9 @@ import './EditorScreen.css'
 const SLOW_AFTER_MS = 10 * 60_000
 
 type Phase =
-  | { kind: 'waiting'; job: Job | null; slow: boolean }
+  /** Статус ещё не пришёл или разметка готова и догружается: считать заново ничего не нужно. */
+  | { kind: 'loading' }
+  | { kind: 'waiting'; job: Job; slow: boolean }
   | { kind: 'ready'; prediction: Prediction }
   | { kind: 'error'; message: string; code: string }
 
@@ -44,10 +49,22 @@ export function EditorScreen() {
   const refreshTasks = useTasksStore((s) => s.refresh)
 
   const mode: 'review' | 'scratch' = params.get('mode') === 'scratch' ? 'scratch' : 'review'
-  const [phase, setPhase] = useState<Phase>({ kind: 'waiting', job: null, slow: false })
+  const [phase, setPhase] = useState<Phase>({ kind: 'loading' })
   const [tab, setTab] = useState<'keyframes' | 'inspector'>('keyframes')
   const [saving, setSaving] = useState(false)
   const [savedAt, setSavedAt] = useState<string | null>(null)
+  // Имя файла с сервера — запасной заголовок: при прямом открытии ссылки или
+  // перезагрузке список задач ещё не загружен, и без него в шапке светился бы
+  // голый идентификатор.
+  const [filename, setFilename] = useState<string | null>(null)
+  const title = task?.title ?? filename?.replace(/\.[^.]+$/, '') ?? jobId
+
+  // Список задач нужен ради названия, которое живёт только на клиенте.
+  useEffect(() => {
+    if (!task) void refreshTasks()
+    // Только при первом открытии: дальше список обновляет сам экран задач.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobId])
 
   const videoRef = useRef<VideoHandle>(null)
   const load = useEditorStore((s) => s.load)
@@ -68,6 +85,7 @@ export function EditorScreen() {
       jobId,
       (job) => {
         if (cancelled) return
+        if (job.filename) setFilename(job.filename)
 
         if (job.status === 'failed') {
           setPhase({
@@ -85,6 +103,7 @@ export function EditorScreen() {
           // Дорожку заполняет актуальная разметка, а прогноз нужен отдельно:
           // по нему считается дифф правок и он остаётся неизменяемым.
           // В режиме замера прогноз не показывается, но база сравнения та же.
+          setPhase({ kind: 'loading' })
           void Promise.all([getAnnotation(jobId), getPrediction(jobId), getVocab()])
             .then(([annotation, prediction, vocabDoc]) => {
               if (cancelled) return
@@ -119,14 +138,10 @@ export function EditorScreen() {
   // При открытой лексике модель отвечает своими словами, поэтому значения вне
   // словаря — норма, а не сбой: контракт (§1) требует показать их как есть.
   const vocab = useEditorStore((s) => s.vocab)
-  const { actions, objects, unknownValues } = useMemo(
-    () =>
-      mergeVocab(
-        vocab?.actions ?? [],
-        vocab?.objects ?? [],
-        phase.kind === 'ready' ? phase.prediction : null,
-      ),
-    [vocab, phase],
+  const segments = useEditorStore((s) => s.segments)
+  const { actions, objects } = useMemo(
+    () => mergeVocab(vocab?.actions ?? [], vocab?.objects ?? [], segments),
+    [vocab, segments],
   )
 
   const timer = useActivityTimer(phase.kind === 'ready' ? jobId : null, mode)
@@ -143,7 +158,38 @@ export function EditorScreen() {
     [seek],
   )
 
-  useKeyboardShortcuts(phase.kind === 'ready', videoRef, actions, seek)
+  const prediction = phase.kind === 'ready' ? phase.prediction : null
+  const save = useCallback(async () => {
+    if (!prediction || saving) return
+    const state = useEditorStore.getState()
+    if (validate(state.segments, state.durationMs).length > 0) {
+      toast.warn('Сначала исправьте проблемы разметки')
+      return
+    }
+    setSaving(true)
+    try {
+      const review = buildReview(prediction, state.segments, 'user_12', timer.seconds * 1000)
+      review.mode = mode
+      const res = await saveReview(jobId, review)
+      setSavedAt(res.saved_at)
+      // Замер времени уходит отдельным событием: сложить его с отправкой
+      // значило бы посчитать один интервал дважды.
+      timer.report()
+      void refreshTasks()
+      if (res.problems.length) {
+        toast.warn(`Замечания по словарю: ${res.problems.length}`, res.problems.slice(0, 5))
+      }
+    } catch (e) {
+      toast.error('Не удалось сохранить правку', [e instanceof Error ? e.message : String(e)])
+    } finally {
+      setSaving(false)
+    }
+  }, [prediction, saving, timer, mode, jobId, refreshTasks])
+  // Горячая клавиша зовёт актуальную версию, а не ту, что была при подписке.
+  const saveRef = useRef(save)
+  saveRef.current = save
+
+  useKeyboardShortcuts(phase.kind === 'ready', videoRef, actions, seek, saveRef)
 
   if (phase.kind === 'error') {
     return (
@@ -159,9 +205,21 @@ export function EditorScreen() {
     )
   }
 
+  if (phase.kind === 'loading') {
+    return (
+      <div className="ed__loading">
+        <div className="empty__title">Загружаю разметку</div>
+        <p style={{ color: 'var(--text-dim)' }}>{title}</p>
+        <Link className="btn" to="/">
+          К списку
+        </Link>
+      </div>
+    )
+  }
+
   if (phase.kind === 'waiting') {
-    const progress = phase.job?.progress ?? 0
-    const currentStage = phase.job?.stage
+    const progress = phase.job.progress
+    const currentStage = phase.job.stage
     return (
       <div className="ed__loading">
         <div>
@@ -171,7 +229,7 @@ export function EditorScreen() {
           <p style={{ color: 'var(--text-dim)', textAlign: 'center', marginTop: 6 }}>
             {phase.slow
               ? 'Задача не потеряна и продолжает считаться. Можно подождать или отменить.'
-              : (task?.title ?? jobId)}
+              : (title)}
           </p>
         </div>
         <div className="ed__loading-bar">
@@ -206,19 +264,17 @@ export function EditorScreen() {
     )
   }
 
-  const prediction = phase.prediction
   return (
     <EditorBody
-      prediction={prediction}
+      prediction={phase.prediction}
       actions={actions}
       objects={objects}
-      unknownValues={unknownValues}
       // Против фикстур ролика нет: запрашивать медиа и кадры не у кого, и
       // молчаливые 404 в консоли только маскировали бы настоящие ошибки.
       videoSrc={USING_MOCK ? null : mediaUrl(jobId)}
       frameUrl={USING_MOCK ? null : (ms) => frameUrl(jobId, ms)}
       videoRef={videoRef}
-      title={task?.title ?? jobId}
+      title={title}
       mode={mode}
       seconds={timer.seconds}
       tab={tab}
@@ -228,27 +284,7 @@ export function EditorScreen() {
       onSeek={seek}
       onPickKeyframe={selectAndSeek}
       onExitScratch={() => navigate(`/task/${jobId}`)}
-      onSave={async () => {
-        setSaving(true)
-        try {
-          const state = useEditorStore.getState()
-          const review = buildReview(prediction, state.segments, 'user_12', timer.seconds * 1000)
-          review.mode = mode
-          const res = await saveReview(jobId, review)
-          setSavedAt(res.saved_at)
-          // Замер времени уходит отдельным событием: сложить его с отправкой
-          // значило бы посчитать один интервал дважды.
-          timer.report()
-          void refreshTasks()
-          if (res.problems.length) {
-            console.warn('Замечания по словарю:', res.problems)
-          }
-        } catch (e) {
-          alert(e instanceof Error ? e.message : 'Не удалось сохранить правку')
-        } finally {
-          setSaving(false)
-        }
-      }}
+      onSave={() => void save()}
     />
   )
 }
@@ -257,7 +293,6 @@ interface BodyProps {
   prediction: Prediction
   actions: VocabAction[]
   objects: VocabObject[]
-  unknownValues: string[]
   videoSrc: string | null
   frameUrl: ((ms: number) => string) | null
   videoRef: React.RefObject<VideoHandle | null>
@@ -279,7 +314,6 @@ function EditorBody({
   prediction,
   actions,
   objects,
-  unknownValues,
   videoSrc,
   frameUrl,
   videoRef,
@@ -308,7 +342,9 @@ function EditorBody({
     () => diffAgainstPrediction(prediction.segments, segments),
     [prediction, segments],
   )
-  const [exportOpen, setExportOpen] = useState(false)
+  const vocab = useEditorStore((s) => s.vocab)
+  const oov = useMemo(() => outOfVocab(segments, vocab), [segments, vocab])
+  const [oovOpen, setOovOpen] = useState(false)
 
   const applyVerifyAll = useEditorStore((s) => s.applyVerifyAll)
   const gotoNextUnverified = useEditorStore((s) => s.gotoNextUnverified)
@@ -333,17 +369,24 @@ function EditorBody({
         'text/csv',
       )
     }
-    setExportOpen(false)
   }
 
+  const jumpTo = (segmentId: string) => {
+    const seg = segments.find((x) => x.id === segmentId)
+    if (seg) onPickKeyframe(seg.id, seg.keyframe_ms ?? seg.start_ms)
+  }
+
+  const { width, height } = prediction.video
+  const videoAspect = width > 0 && height > 0 ? `${width} / ${height}` : undefined
+
   return (
-    <div className="ed">
+    <div className="ed" style={{ '--video-ar': videoAspect } as React.CSSProperties}>
       <header className="ed__top">
         <Link className="btn btn--ghost btn--sm ed__back" to="/">
           ← Задачи
         </Link>
         <div className="ed__titles">
-          <div className="ed__title">{title}</div>
+          <div className="ed__title" title={title}>{title}</div>
           <div className="ed__sub">
             {prediction.model_version} · vocab {prediction.vocab_version} ·{' '}
             {formatDuration(prediction.video.duration_ms)}
@@ -351,19 +394,19 @@ function EditorBody({
         </div>
 
         <div className="ed__stats">
-          <div className="ed__stat">
+          <div className="ed__stat" title="Сегментов на дорожке">
             <span className="ed__stat-val">{segments.length}</span>
             <span className="ed__stat-key">сегментов</span>
           </div>
-          <div className="ed__stat">
+          <div className="ed__stat" title="Сегментов, которые человек менял относительно прогноза">
             <span className="ed__stat-val">{edited}</span>
             <span className="ed__stat-key">правок</span>
           </div>
-          <div className="ed__stat">
+          <div className="ed__stat" title="Какая доля ролика накрыта сегментами">
             <span className="ed__stat-val">{cov}%</span>
             <span className="ed__stat-key">покрытие</span>
           </div>
-          <div className="ed__stat">
+          <div className="ed__stat" title="Сегментов, которые человек просмотрел и подтвердил">
             <span
               className="ed__stat-val"
               style={{ color: checked === segments.length && segments.length ? 'var(--ok)' : undefined }}
@@ -377,11 +420,45 @@ function EditorBody({
             <span className="ed__stat-key">{mode === 'scratch' ? 'с нуля' : 'проверка'}</span>
           </div>
           {issues.length > 0 && (
-            <div className="ed__stat">
+            <div className="ed__stat" title="Проблемы разметки: список под шапкой">
               <span className="ed__stat-val" style={{ color: 'var(--danger)' }}>
                 {issues.length}
               </span>
               <span className="ed__stat-key">проблем</span>
+            </div>
+          )}
+          {oov.length > 0 && (
+            <div className="ed__stat ed__stat--pop">
+              <button
+                className="ed__stat-btn"
+                onClick={() => setOovOpen((v) => !v)}
+                title="Значения, которых нет в словаре задачи. Показаны как есть, при экспорте не заменяются."
+              >
+                <span className="ed__stat-val" style={{ color: 'var(--warn)' }}>
+                  {oov.length}
+                </span>
+                <span className="ed__stat-key">вне словаря</span>
+              </button>
+              {oovOpen && (
+                <div className="ed__pop menu__list" role="menu">
+                  {oov.slice(0, 20).map((item) => (
+                    <button
+                      key={`${item.segmentId}-${item.field}`}
+                      className="btn btn--ghost btn--sm menu__item"
+                      onClick={() => {
+                        setOovOpen(false)
+                        jumpTo(item.segmentId)
+                      }}
+                    >
+                      <span className="mono" style={{ color: 'var(--text-dim)' }}>
+                        {item.segmentId}
+                      </span>
+                      <span>{item.field === 'action' ? 'действие' : 'объект'}: {item.value}</span>
+                    </button>
+                  ))}
+                  {oov.length > 20 && <div className="field__hint">и ещё {oov.length - 20}</div>}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -394,67 +471,52 @@ function EditorBody({
             ↷
           </button>
 
-          <button
-            className="btn btn--sm"
-            onClick={() => gotoNextUnverified()}
-            disabled={checked === segments.length}
-            title="Следующий непроверенный (Shift+Tab)"
-          >
-            ⇥ Непроверенный
-          </button>
-          <button
-            className="btn btn--sm"
-            onClick={applyVerifyAll}
-            disabled={checked === segments.length}
-            title="Подтвердить все оставшиеся"
-          >
-            ✓ Все
-          </button>
-
-          <div style={{ position: 'relative' }}>
-            <button className="btn btn--sm" onClick={() => setExportOpen((v) => !v)}>
-              Экспорт ▾
+          <div className="ed__secondary">
+            <button
+              className="btn btn--sm"
+              onClick={() => gotoNextUnverified()}
+              disabled={checked === segments.length}
+              title="Следующий непроверенный (Shift+Tab)"
+            >
+              ⇥ Непроверенный
             </button>
-            {exportOpen && (
-              <div
-                style={{
-                  position: 'absolute',
-                  right: 0,
-                  top: 'calc(100% + 6px)',
-                  zIndex: 30,
-                  background: 'var(--surface-2)',
-                  border: '1px solid var(--line-strong)',
-                  borderRadius: 'var(--r-md)',
-                  boxShadow: 'var(--shadow)',
-                  padding: 6,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 2,
-                  minWidth: 210,
-                }}
-              >
-                <button className="btn btn--ghost btn--sm" onClick={() => doExport('json', 'review')}>
-                  JSON — правка
-                </button>
-                <button className="btn btn--ghost btn--sm" onClick={() => doExport('csv', 'review')}>
-                  CSV — правка
-                </button>
-                <hr className="divider" style={{ margin: '4px 0' }} />
-                <button
-                  className="btn btn--ghost btn--sm"
-                  onClick={() => doExport('json', 'prediction')}
-                >
-                  JSON — исходный прогноз
-                </button>
-                <button
-                  className="btn btn--ghost btn--sm"
-                  onClick={() => doExport('csv', 'prediction')}
-                >
-                  CSV — исходный прогноз
-                </button>
-              </div>
-            )}
+            <button
+              className="btn btn--sm"
+              onClick={applyVerifyAll}
+              disabled={checked === segments.length}
+              title="Подтвердить все оставшиеся"
+            >
+              ✓ Все
+            </button>
           </div>
+          <div className="ed__more">
+            <Menu
+              label="⋯"
+              title="Ещё"
+              items={[
+                {
+                  label: '⇥ Следующий непроверенный',
+                  onClick: () => void gotoNextUnverified(),
+                  disabled: checked === segments.length,
+                },
+                {
+                  label: '✓ Подтвердить все',
+                  onClick: applyVerifyAll,
+                  disabled: checked === segments.length,
+                },
+              ]}
+            />
+          </div>
+
+          <Menu
+            label="Экспорт ▾"
+            items={[
+              { label: 'JSON — правка', onClick: () => doExport('json', 'review') },
+              { label: 'CSV — правка', onClick: () => doExport('csv', 'review') },
+              { label: 'JSON — исходный прогноз', onClick: () => doExport('json', 'prediction'), divider: true },
+              { label: 'CSV — исходный прогноз', onClick: () => doExport('csv', 'prediction') },
+            ]}
+          />
 
           <button
             className="btn btn--primary btn--sm"
@@ -473,33 +535,41 @@ function EditorBody({
         </div>
       </header>
 
-      {mode === 'scratch' && (
-        <div className="banner banner--scratch">
-          ⏱ Замер ручной разметки: прогноз скрыт, идёт отсчёт времени. Результат не
-          заменит настоящую правку — он нужен только для сравнения скорости.
-          <button className="btn btn--sm" style={{ marginLeft: 'auto' }} onClick={onExitScratch}>
-            Выйти к разметке
-          </button>
-        </div>
-      )}
-      {mode !== 'scratch' && prediction.errors.length > 0 && (
-        <div className="banner banner--warn">
-          ⚠ {prediction.errors.map((e) => e.message).join('; ')}
-          {missingKeyframes > 0 && ` — ${missingKeyframes} сегментов без ключевого кадра`}
-        </div>
-      )}
-      {unknownValues.length > 0 && (
-        <div className="banner banner--warn">
-          ⚠ Значения вне словаря: {unknownValues.join(', ')}. Показаны как есть — при
-          открытой лексике модель отвечает своими словами.
-        </div>
-      )}
-      {issues.length > 0 && (
-        <div className="banner banner--err">
-          ⚠ {issues[0].message}
-          {issues.length > 1 && ` и ещё ${issues.length - 1}`} — отправка review заблокирована
-        </div>
-      )}
+      {/* Баннеры в одном блоке: у сетки ровно три строки, и что бы ни появилось
+          сверху, видео с таймлайном получают остаток высоты, а не обрезаются. */}
+      <div className="ed__banners">
+        {mode === 'scratch' && (
+          <div className="banner banner--scratch">
+            ⏱ Замер ручной разметки: прогноз скрыт, идёт отсчёт времени. Результат не
+            заменит настоящую правку — он нужен только для сравнения скорости.
+            <button className="btn btn--sm" style={{ marginLeft: 'auto' }} onClick={onExitScratch}>
+              Выйти к разметке
+            </button>
+          </div>
+        )}
+        {mode !== 'scratch' && prediction.errors.length > 0 && (
+          <div className="banner banner--warn">
+            ⚠ {prediction.errors.map((e) => e.message).join('; ')}
+            {missingKeyframes > 0 && ` — ${missingKeyframes} сегментов без ключевого кадра`}
+          </div>
+        )}
+        {issues.length > 0 && (
+          <div className="banner banner--err banner--list">
+            <span>⚠ Отправка правки заблокирована:</span>
+            {issues.slice(0, 5).map((issue, i) => (
+              <button
+                key={i}
+                className="banner__link"
+                disabled={!issue.segmentId}
+                onClick={() => issue.segmentId && jumpTo(issue.segmentId)}
+              >
+                {issue.message}
+              </button>
+            ))}
+            {issues.length > 5 && <span>и ещё {issues.length - 5}</span>}
+          </div>
+        )}
+      </div>
 
       <div className="ed__main">
         <div className="ed__left">
@@ -559,58 +629,29 @@ function formatClock(seconds: number): string {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
 }
 
-/**
- * Значения, которых нет в словаре задачи, не подменяем на unknown и не роняем
- * интерфейс (контракт §1) — добавляем в список с нейтральным цветом и
- * предупреждаем баннером.
- */
-function mergeVocab(
-  actions: VocabAction[],
-  objects: VocabObject[],
-  prediction: Prediction | null,
-): { actions: VocabAction[]; objects: VocabObject[]; unknownValues: string[] } {
-  if (!prediction) return { actions, objects, unknownValues: [] }
-  const actionIds = new Set(actions.map((a) => a.id))
-  const objectIds = new Set(objects.map((o) => o.id))
-  const extraActions: VocabAction[] = []
-  const extraObjects: VocabObject[] = []
-  const unknown: string[] = []
-
-  for (const seg of prediction.segments) {
-    if (!actionIds.has(seg.action.value)) {
-      actionIds.add(seg.action.value)
-      extraActions.push({ id: seg.action.value, label_ru: seg.action.value, color: '#9AA3AD' })
-      unknown.push(seg.action.value)
-    }
-    if (!objectIds.has(seg.object.value)) {
-      objectIds.add(seg.object.value)
-      extraObjects.push({ id: seg.object.value, label_ru: seg.object.value })
-      unknown.push(seg.object.value)
-    }
-  }
-  return {
-    actions: [...actions, ...extraActions],
-    objects: [...objects, ...extraObjects],
-    unknownValues: unknown,
-  }
-}
-
 /** Горячие клавиши: ручная проверка должна идти с клавиатуры, а не мышью. */
 function useKeyboardShortcuts(
   active: boolean,
   videoRef: React.RefObject<VideoHandle | null>,
   actions: VocabAction[],
   seek: (ms: number) => void,
+  saveRef: React.RefObject<() => Promise<void>>,
 ) {
   useEffect(() => {
     if (!active) return
     const onKey = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey
+      // Сохранение работает и из поля ввода: иначе Ctrl+S открывал бы «сохранить страницу».
+      if (mod && e.key.toLowerCase() === 's') {
+        e.preventDefault()
+        void saveRef.current()
+        return
+      }
       const target = e.target as HTMLElement | null
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
         return
       }
       const store = useEditorStore.getState()
-      const mod = e.metaKey || e.ctrlKey
 
       if (mod && e.key.toLowerCase() === 'z') {
         e.preventDefault()
@@ -727,5 +768,5 @@ function useKeyboardShortcuts(
 
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [active, videoRef, actions, seek])
+  }, [active, videoRef, actions, seek, saveRef])
 }

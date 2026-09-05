@@ -102,6 +102,10 @@ VLM_FRAME_WIDTH = int(os.getenv("PRAXIS_VLM_FRAME_WIDTH", "640"))
 JOB_TIMEOUT_SEC = float(os.getenv("PRAXIS_JOB_TIMEOUT_SEC", "300"))
 GPU_HOUR_COST = float(os.getenv("PRAXIS_GPU_HOUR_COST", "60"))
 VLM_TIMEOUT = float(os.getenv("PRAXIS_VLM_TIMEOUT", "120"))
+# Проба /health перед нарезкой кадров. Без неё недоступный сервис обнаруживался бы
+# только после того, как ffmpeg вырезал по семь кадров на каждый шаг — секунды впустую
+# на каждом ролике, пока туннель к GPU-машине не поднят.
+VLM_HEALTH_TIMEOUT = float(os.getenv("PRAXIS_VLM_HEALTH_TIMEOUT", "3"))
 
 # Писать ли в экспорт отметку о проверке шага человеком. В требованиях кейса такого
 # поля нет, но заказчику важно знать, что подтверждено живым человеком, а что нет.

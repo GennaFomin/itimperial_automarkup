@@ -1,0 +1,9 @@
+.menu { position: relative; }
+.menu__list {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; min-width: 210px;
+  display: flex; flex-direction: column; gap: 2px; padding: 6px;
+  background: var(--surface-2); border: 1px solid var(--line-strong);
+  border-radius: var(--r-md); box-shadow: var(--shadow);
+}
+.menu__item { width: 100%; justify-content: flex-start; }
+.menu__divider { margin: 4px 0; }

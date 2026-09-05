@@ -47,6 +47,8 @@ export interface Job {
   started_at: string | null
   finished_at: string | null
   error: ApiError['error'] | null
+  /** Имя загруженного файла: сервер отдаёт его и в статусе, и в списке. */
+  filename?: string
 }
 
 export interface ApiError {
@@ -83,6 +85,12 @@ export interface PredictionSegment {
   keyframe_confidence: number | null
   /** Человек уже просмотрел этот шаг. Расширение контракта. */
   verified?: boolean
+  /**
+   * Откуда взялся шаг: прогноз, правка человека или созданный руками.
+   * Расширение контракта: без него повторно открытая задача забывала бы,
+   * что человек уже менял, и снова показывала бы уверенность модели.
+   */
+  source?: 'auto' | 'edited' | 'manual'
 }
 
 export interface PredictionError {
@@ -188,11 +196,14 @@ export interface VocabAction {
   id: string
   label_ru: string
   color: string
+  /** Значения нет в словаре задачи: добавлено из разметки, чтобы показать как есть. */
+  unknown?: boolean
 }
 
 export interface VocabObject {
   id: string
   label_ru: string
+  unknown?: boolean
 }
 
 export interface Vocabulary {

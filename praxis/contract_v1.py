@@ -12,8 +12,8 @@
     object: str | None              object: {value, confidence}, где None → "unknown"
     confidence: float | None        по полю отдельно
     id: int                         id: "seg_001"
-    source: auto|edited|manual      origin: model|human
-    level, parent_id, verified      —
+    source: auto|edited|manual      origin: model|human (и source как расширение)
+    level, parent_id, verified      — (verified отдаётся как расширение)
 
 Направление «наружу» простое. Опасное направление — обратное: контракт не переносит
 `level`, `parent_id`, `verified`, `source` и `provenance`, поэтому правку нельзя
@@ -110,6 +110,10 @@ def to_segment(step: Step, duration_ms: int) -> dict:
         # Расширение контракта: без него редактор, открытый повторно, не знал бы,
         # какие шаги человек уже просмотрел, и просил бы проверить их заново.
         "verified": step.verified,
+        # Тоже расширение: без него после перезагрузки правленый шаг выглядел бы
+        # как нетронутый прогноз — со счётчиком правок в нуле и уверенностью
+        # модели поверх значения, которое человек уже заменил.
+        "source": step.source.value,
     }
 
 
@@ -254,7 +258,7 @@ def to_vocab_doc(vocabulary: Vocabulary) -> dict:
         objects.append({"id": UNKNOWN, "label_ru": "Неизвестно"})
 
     return {
-        "version": str(vocabulary.version),
+        "version": vocabulary.version_tag,
         "name": vocabulary.name,
         # При открытой лексике список — подсказка, а не ограничение. UI по этому
         # флагу может разрешить свободный ввод вместо строгого выбора.

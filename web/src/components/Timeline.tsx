@@ -5,6 +5,7 @@ import { MIN_SEGMENT_MS, snap, snapPoints } from '../lib/segments'
 import { clamp, formatShort, tickStepMs } from '../lib/time'
 import type { VocabAction, VocabObject } from '../api/types'
 import { RangePicker } from './RangePicker'
+import { frequentValues } from '../lib/vocab'
 import './Timeline.css'
 
 /** Уверенность ниже этого порога подсвечиваем штриховкой — место вероятной ошибки. */
@@ -31,6 +32,8 @@ type Drag =
 
 export function Timeline({ actions, objects, onSeek }: Props) {
   const segments = useEditorStore((s) => s.segments)
+  const vocabPairs = useEditorStore((s) => s.vocab?.pairs)
+  const openVocabulary = useEditorStore((s) => s.vocab?.open ?? false)
   const durationMs = useEditorStore((s) => s.durationMs)
   const viewStartMs = useEditorStore((s) => s.viewStartMs)
   const viewEndMs = useEditorStore((s) => s.viewEndMs)
@@ -418,8 +421,12 @@ export function Timeline({ actions, objects, onSeek }: Props) {
           <RangePicker
             actions={actions}
             objects={objects}
+            pairs={vocabPairs}
+            allowFree={openVocabulary}
+            frequentActions={frequentValues(segments, 'action')}
+            frequentObjects={frequentValues(segments, 'object')}
             // Держим попап в пределах дорожки, чтобы он не уезжал за край окна.
-            x={clamp(rangePx.left + rangePx.width / 2, 142, Math.max(142, width - 142))}
+            x={clamp(rangePx.left + rangePx.width / 2, 168, Math.max(168, width - 168))}
             range={rangeSelection}
             mode={
               segments.some((s) => rangeSelection[0] < s.end_ms && rangeSelection[1] > s.start_ms)

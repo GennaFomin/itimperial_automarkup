@@ -33,7 +33,10 @@ def probe(path: Path) -> dict:
             "-select_streams",
             "v:0",
             "-show_entries",
-            "stream=width,height,avg_frame_rate,codec_name:format=duration",
+            (
+                "stream=width,height,avg_frame_rate,codec_name"
+                ":stream_side_data=rotation:stream_tags=rotate:format=duration"
+            ),
             "-of",
             "json",
             str(path),
@@ -50,13 +53,33 @@ def probe(path: Path) -> dict:
     if duration <= 0 or fps <= 0:
         raise MediaError("не удалось определить длительность или частоту кадров")
 
+    width, height = int(stream["width"]), int(stream["height"])
+    if _rotation(stream) % 180 == 90:
+        # Телефон пишет портретный ролик как ландшафтный с пометкой о повороте;
+        # плеер и ffmpeg его поворачивают, значит и размеры должны быть повёрнутые.
+        width, height = height, width
+
     return {
-        "width": int(stream["width"]),
-        "height": int(stream["height"]),
+        "width": width,
+        "height": height,
         "fps": round(fps, 3),
         "duration_sec": round(duration, 3),
         "codec": stream.get("codec_name", ""),
     }
+
+
+def _rotation(stream: dict) -> int:
+    """Поворот потока в градусах по модулю 360: из side data или из старого тега."""
+    candidates = [item.get("rotation") for item in stream.get("side_data_list", []) or []]
+    candidates.append((stream.get("tags") or {}).get("rotate"))
+    for value in candidates:
+        if value is None:
+            continue
+        try:
+            return round(float(value)) % 360
+        except (TypeError, ValueError):
+            continue
+    return 0
 
 
 def extract_frame(
@@ -69,6 +92,10 @@ def extract_frame(
 ) -> Path:
     """Один кадр в JPEG. Кроп задаётся долями кадра (слева, сверху, ширина, высота).
 
+    `width` — предел длинной стороны, а не ширины: вертикальный ролик иначе давал бы
+    кадр 640×1138, втрое больше по площади, чем то, на чём подбирали число кадров
+    для модели.
+
     stamp впечатывает подпись прямо в пиксели: языковая модель связывает время с кадром
     заметно лучше, когда оно нарисовано на самом кадре, а не подписано рядом текстом.
     """
@@ -79,7 +106,7 @@ def extract_frame(
         filters.append(
             f"crop=iw*{span_x:.4f}:ih*{span_y:.4f}:iw*{left:.4f}:ih*{top:.4f}"
         )
-    filters.append(f"scale={width}:-2")
+    filters.append(f"scale=w='if(gt(iw,ih),{width},-2)':h='if(gt(iw,ih),-2,{width})'")
     if stamp:
         filters.append(
             f"drawtext=text='{stamp}':x=8:y=8:fontsize=28:fontcolor=white:box=1:boxcolor=black"

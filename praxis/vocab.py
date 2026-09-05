@@ -32,6 +32,14 @@ class Vocabulary(BaseModel):
     # ответ уже является той строкой, которую человек должен увидеть.
     labels: dict[str, str] = Field(default_factory=dict)
 
+    @property
+    def version_tag(self) -> str:
+        """Один ярлык словаря для всех ответов API: `имя@vN`.
+
+        Раньше `/vocab` отдавал номер, а прогноз — имя, и сверить их было нельзя.
+        """
+        return f"{self.name}@v{self.version}"
+
     def has_action(self, action: str) -> bool:
         return action in self.actions
 
@@ -68,12 +76,14 @@ def check_annotation(annotation: Annotation, vocabulary: Vocabulary) -> list[str
 
     Не исключение, потому что редактору нужно показать проблемы, а не упасть.
     """
+    if config.OPEN_VOCABULARY:
+        # Словаря нет — сверять не с чем: свободная метка при открытой лексике не
+        # проблема разметки, а норма. Иначе каждая правка приходила бы с замечанием.
+        return []
     problems: list[str] = []
     for step in annotation.steps:
         if not vocabulary.has_action(step.action):
             problems.append(f"шаг {step.id}: действие «{step.action}» вне словаря")
-        elif config.OPEN_VOCABULARY:
-            pass  # словаря нет — сверять не с чем, это не ошибка разметки
         elif not vocabulary.is_valid_pair(step.action, step.object):
             problems.append(f"шаг {step.id}: пара «{step.action}» + «{step.object}» вне словаря")
     return problems

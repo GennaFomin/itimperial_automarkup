@@ -25,6 +25,9 @@ class FakeVlm(RemoteVlmNamer):
         super().__init__("http://example.invalid")
         self.results = results
 
+    def _unavailable(self) -> str | None:
+        return None
+
     def _frames(self, video_path: Path, step: Step, crop=None) -> list[str]:
         return ["ZmFrZQ=="]
 
@@ -76,6 +79,22 @@ def test_survives_unreachable_service():
     """Отказ сервиса не должен ронять разметку: шаги остаются, статус попадает в провенанс."""
     namer = RemoteVlmNamer("http://127.0.0.1:9/annotate", frames_per_step=1, timeout=1)
     namer._frames = lambda video_path, step, crop=None: ["ZmFrZQ=="]  # noqa: SLF001
+
+    original = steps()
+    result = namer.name_steps(Path("clip.mp4"), VIDEO, original, load_vocabulary())
+
+    assert result.steps == original
+    assert "недоступен" in result.models["namer_status"]
+
+
+def test_unreachable_service_is_detected_before_cutting_frames():
+    """Недоступность выясняется пробой /health, а не после нарезки кадров на каждый шаг."""
+    namer = RemoteVlmNamer("http://127.0.0.1:9", frames_per_step=1, timeout=1)
+
+    def no_frames(video_path, step, crop=None, width=None):
+        raise AssertionError("кадры не должны резаться для недоступного сервиса")
+
+    namer._frames = no_frames
 
     original = steps()
     result = namer.name_steps(Path("clip.mp4"), VIDEO, original, load_vocabulary())
@@ -151,6 +170,9 @@ def test_namer_request_carries_every_mode_flag(monkeypatch, tmp_path):
     sent: dict = {}
 
     class Fake(naming.RemoteVlmNamer):
+        def _unavailable(self):
+            return None
+
         def _frames(self, *args, **kwargs):
             return ["x"]
 
@@ -187,6 +209,9 @@ def test_open_vocabulary_keeps_answers_outside_the_list(monkeypatch, tmp_path):
     from praxis.vocab import load_vocabulary
 
     class Fake(naming.RemoteVlmNamer):
+        def _unavailable(self):
+            return None
+
         def _frames(self, *args, **kwargs):
             return ["x"]
 

@@ -14,6 +14,9 @@
 
 /* ---------- Ключевые кадры ---------- */
 .kf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 9px; padding: 12px; }
+.kf-bar { display: flex; align-items: center; gap: 10px; padding: 10px 12px 0; font-size: 12.5px; color: var(--text-muted); }
+.kf-filter { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.kf-filter input { accent-color: var(--accent); }
 
 .kf {
   border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden;
@@ -23,8 +26,10 @@
 .kf:hover { border-color: var(--line-strong); transform: translateY(-1px); }
 .kf--on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 
-.kf__thumb { position: relative; aspect-ratio: 16 / 9; background: #000; display: grid; place-items: center; }
-.kf__thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* Пропорция миниатюры — пропорция ролика: вертикальный или 4:3 кадр показывается
+   целиком, а не обрезается до 16:9. */
+.kf__thumb { position: relative; aspect-ratio: var(--video-ar, 16 / 9); max-height: 220px; background: #000; display: grid; place-items: center; }
+.kf__thumb img { width: 100%; height: 100%; object-fit: contain; display: block; }
 .kf__placeholder { font-size: 11px; color: var(--text-dim); text-align: center; padding: 6px; }
 .kf__spinner {
   width: 16px; height: 16px; border-radius: 99px;
@@ -52,7 +57,9 @@
 .insp__section-label {
   font-size: 11px; font-weight: 700; color: var(--text-dim);
   text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 7px;
+  display: flex; align-items: center; gap: 8px;
 }
+.insp__oov { font-weight: 600; color: var(--warn); text-transform: none; letter-spacing: 0; }
 
 .opts { display: flex; flex-wrap: wrap; gap: 5px; }
 .opt {

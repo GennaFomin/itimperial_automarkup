@@ -244,6 +244,13 @@ export async function cancelJob(jobId: string): Promise<void> {
   }
 }
 
+export async function deleteJob(jobId: string): Promise<void> {
+  await sleep(120)
+  jobs.delete(jobId)
+  reviews.delete(jobId)
+  persistJobs()
+}
+
 /**
  * Фикстура снята с ролика фиксированной длины. Если пользователь загрузил
  * своё видео — растягиваем сегменты пропорционально, чтобы разметка легла

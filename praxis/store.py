@@ -207,7 +207,28 @@ def review_stats() -> dict:
     return result
 
 
+def video_path(video_id: str) -> Path:
+    """Где лежат файлы задания — без побочного создания папки.
+
+    Нужен там, где папки может уже не быть: после удаления задания повторное
+    обращение не должно воскрешать пустой каталог.
+    """
+    return config.WORK_DIR / video_id
+
+
 def video_dir(video_id: str) -> Path:
-    path = config.WORK_DIR / video_id
+    path = video_path(video_id)
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def delete_video(video_id: str) -> bool:
+    """Удалить задание вместе с журналом событий. Возвращает, было ли что удалять.
+
+    Каскада в схеме нет намеренно: события — append-only журнал, и обычные
+    операции его не трогают. Удаление задания — единственное исключение.
+    """
+    with connect() as connection:
+        connection.execute("DELETE FROM events WHERE video_id = ?", (video_id,))
+        cursor = connection.execute("DELETE FROM videos WHERE id = ?", (video_id,))
+        return cursor.rowcount > 0

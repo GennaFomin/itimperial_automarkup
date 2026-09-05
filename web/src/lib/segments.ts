@@ -45,7 +45,9 @@ export const MIN_SEGMENT_MS = 120
 export function fromPrediction(segments: PredictionSegment[]): EditableSegment[] {
   return segments.map((s) => ({
     id: s.id,
-    origin: 'model' as const,
+    // Созданный руками сегмент остаётся человеческим и после перезагрузки:
+    // иначе в экспорте он ушёл бы как модельный.
+    origin: s.source === 'manual' ? ('human' as const) : ('model' as const),
     start_ms: s.start_ms,
     end_ms: s.end_ms,
     action: s.action.value,
@@ -54,7 +56,9 @@ export function fromPrediction(segments: PredictionSegment[]): EditableSegment[]
     boundary_confidence: s.boundary_confidence,
     action_confidence: s.action.confidence,
     object_confidence: s.object.confidence,
-    edited: false,
+    // Флаг правки тоже восстанавливается с сервера: сохранённая и вновь открытая
+    // правка — всё ещё правка, а не нетронутый прогноз.
+    edited: s.source === 'edited' || s.source === 'manual',
     // Отметка приходит с сервера: повторно открытая задача не должна просить
     // проверить заново то, что человек уже просмотрел.
     verified: s.verified ?? false,
