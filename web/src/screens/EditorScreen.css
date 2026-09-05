@@ -14,7 +14,8 @@
 .ed__title { font-size: 14.5px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: clamp(120px, 18vw, 320px); }
 .ed__sub { font-size: 11.5px; color: var(--text-dim); font-family: var(--mono); }
 
-.ed__stats { display: flex; gap: 14px; margin-left: 10px; flex-wrap: nowrap; overflow: hidden; min-width: 0; }
+/* Статистика переносится на вторую строку раньше, чем обрежется: цифра без подписи бесполезна. */
+.ed__stats { display: flex; gap: 4px 14px; margin-left: 10px; flex-wrap: wrap; min-width: 0; }
 .ed__stat { display: flex; align-items: baseline; gap: 5px; white-space: nowrap; cursor: default; }
 .ed__stat-val { font-size: 13px; font-weight: 650; font-family: var(--mono); }
 .ed__stat-key { font-size: 10.5px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; }

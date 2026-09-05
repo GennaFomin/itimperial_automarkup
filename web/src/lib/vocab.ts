@@ -4,8 +4,24 @@
  */
 import type { VocabAction, VocabObject, Vocabulary } from '../api/types'
 
-/** Цвет для значения, которого нет в словаре: нейтральный, чтобы не спорить с палитрой. */
+/** Цвет для `unknown` и всего, у чего цвета нет: нейтральный, чтобы не спорить с палитрой. */
 export const UNKNOWN_COLOR = '#9AA3AD'
+
+/**
+ * Устойчивый цвет для метки вне словаря — та же идея, что `color_for` на бэкенде:
+ * при открытой лексике у ролика десяток своих глаголов, и серые одинаковые полосы
+ * на таймлайне не давали отличить «взял» от «положил». Хэш строки задаёт тон,
+ * яркость и насыщенность фиксированы, чтобы цвета сидели в одной палитре.
+ */
+export function colorFor(label: string): string {
+  if (!label || label === 'unknown') return UNKNOWN_COLOR
+  let hash = 2166136261
+  for (let i = 0; i < label.length; i++) {
+    hash ^= label.charCodeAt(i)
+    hash = Math.imul(hash, 16777619) >>> 0
+  }
+  return `hsl(${hash % 360} 62% 58%)`
+}
 
 interface Labelled {
   action: string
@@ -30,7 +46,7 @@ export function mergeVocab(
   for (const seg of segments) {
     if (seg.action && !actionIds.has(seg.action)) {
       actionIds.add(seg.action)
-      extraActions.push({ id: seg.action, label_ru: seg.action, color: UNKNOWN_COLOR, unknown: true })
+      extraActions.push({ id: seg.action, label_ru: seg.action, color: colorFor(seg.action), unknown: true })
     }
     if (seg.object && !objectIds.has(seg.object)) {
       objectIds.add(seg.object)
