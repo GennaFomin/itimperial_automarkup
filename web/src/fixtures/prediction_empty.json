@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.0",
+  "prediction_id": "p_000000",
+  "job_id": "j_000000",
+  "model_version": "pipeline-0.3",
+  "vocab_version": "1.0",
+  "created_at": "2026-09-03T10:01:26Z",
+  "video": {
+    "duration_ms": 42000,
+    "fps": 30,
+    "width": 1920,
+    "height": 1080
+  },
+  "segments": [],
+  "stats": {
+    "latency_ms": 21000,
+    "cost": {
+      "model_sec": 21.0,
+      "gpu_hour_rate": 60.0,
+      "amount": 0.03
+    },
+    "stages_ms": {
+      "decode": 1200,
+      "segment": 400,
+      "recognize": 19400
+    }
+  },
+  "errors": [],
+  "capabilities": {
+    "boundary_confidence": true,
+    "object_confidence": true,
+    "keyframe_confidence": true,
+    "action_confidence": true,
+    "keyframe_source": "selected",
+    "open_vocabulary": false
+  }
+}
