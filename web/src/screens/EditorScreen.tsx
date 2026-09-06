@@ -22,6 +22,7 @@ import { buildExportCsv, buildExportJson, buildReview, download } from '../lib/e
 import { coverage, diffAgainstPrediction, validate, verifiedCount } from '../lib/segments'
 import { formatDuration } from '../lib/time'
 import { useActivityTimer } from '../lib/useActivityTimer'
+import { cacheMedia, cachedMediaUrl } from '../lib/prefetch'
 import { mergeVocab, outOfVocab } from '../lib/vocab'
 import { useEditorStore } from '../store/editorStore'
 import { useTasksStore } from '../store/tasksStore'
@@ -145,6 +146,20 @@ export function EditorScreen() {
   )
 
   const timer = useActivityTimer(phase.kind === 'ready' ? jobId : null, mode)
+
+  // Ролик из памяти вкладки, если прогрев его уже принёс; иначе играем с сервера и
+  // параллельно качаем копию — следующее открытие будет мгновенным.
+  const [videoSrc, setVideoSrc] = useState<string>(() => cachedMediaUrl(jobId) ?? mediaUrl(jobId))
+  useEffect(() => {
+    if (USING_MOCK) return
+    const local = cachedMediaUrl(jobId)
+    if (local) {
+      setVideoSrc(local)
+      return
+    }
+    setVideoSrc(mediaUrl(jobId))
+    void cacheMedia(jobId)
+  }, [jobId])
 
   const seek = useCallback((ms: number) => videoRef.current?.seek(ms), [])
 
@@ -271,7 +286,7 @@ export function EditorScreen() {
       objects={objects}
       // Против фикстур ролика нет: запрашивать медиа и кадры не у кого, и
       // молчаливые 404 в консоли только маскировали бы настоящие ошибки.
-      videoSrc={USING_MOCK ? null : mediaUrl(jobId)}
+      videoSrc={USING_MOCK ? null : videoSrc}
       frameUrl={USING_MOCK ? null : (ms) => frameUrl(jobId, ms)}
       videoRef={videoRef}
       title={title}
