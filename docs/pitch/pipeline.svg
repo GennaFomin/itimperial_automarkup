@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" font-family="Inter, 'Segoe UI', Roboto, Arial, sans-serif">
+  <rect width="1600" height="900" fill="#141413"/>
+  <text x="80" y="100" font-size="44" font-weight="700" fill="#ffffff">Языковая модель не касается времени</text>
+  <text x="80" y="148" font-size="27" fill="#c3c2b7">Границы ставит обученный детектор по видеопризнакам; слова VLM подбирает к уже нарезанным шагам</text>
+  <g font-size="26" fill="#ffffff">
+    <rect x="80" y="280" width="250" height="220" rx="18" fill="#242423" stroke="#3a3a38" stroke-width="2"/>
+    <text x="205" y="340" text-anchor="middle" font-size="30" font-weight="700">Видео</text>
+    <text x="205" y="390" text-anchor="middle" font-size="23" fill="#c3c2b7">MP4, 5–30 с</text>
+    <text x="205" y="425" text-anchor="middle" font-size="23" fill="#c3c2b7">кадры 32 fps</text>
+
+    <rect x="380" y="280" width="300" height="220" rx="18" fill="#242423" stroke="#3a3a38" stroke-width="2"/>
+    <text x="530" y="340" text-anchor="middle" font-size="30" font-weight="700">Признаки</text>
+    <text x="530" y="390" text-anchor="middle" font-size="23" fill="#c3c2b7">TimeSformer, заморожен</text>
+    <text x="530" y="425" text-anchor="middle" font-size="23" fill="#c3c2b7">окно 0.5 с, 8 раз в секунду</text>
+
+    <rect x="730" y="240" width="370" height="300" rx="18" fill="#1d2b40" stroke="#3987e5" stroke-width="3"/>
+    <text x="915" y="298" text-anchor="middle" font-size="30" font-weight="700" fill="#8fbcf5">Детектор границ</text>
+    <text x="915" y="345" text-anchor="middle" font-size="23">две MS-TCN, согласие</text>
+    <text x="915" y="380" text-anchor="middle" font-size="23">один выход на кадр:</text>
+    <text x="915" y="415" text-anchor="middle" font-size="23">«здесь сменилось действие»</text>
+    <text x="915" y="462" text-anchor="middle" font-size="22" fill="#8fbcf5">классов не знает, учится на таймкодах</text>
+    <text x="915" y="497" text-anchor="middle" font-size="22" fill="#8fbcf5">паузы: по полосе движения</text>
+
+    <rect x="1150" y="280" width="370" height="220" rx="18" fill="#3a2418" stroke="#d95926" stroke-width="3"/>
+    <text x="1335" y="338" text-anchor="middle" font-size="30" font-weight="700" fill="#f0a27f">Именование</text>
+    <text x="1335" y="385" text-anchor="middle" font-size="23">Qwen3-VL 8B, кадры шага</text>
+    <text x="1335" y="420" text-anchor="middle" font-size="23">действие, объект, ключевой кадр</text>
+    <text x="1335" y="463" text-anchor="middle" font-size="22" fill="#f0a27f">свободные слова, без списка классов</text>
+  </g>
+  <g stroke="#8a8a86" stroke-width="4" fill="#8a8a86">
+    <line x1="330" y1="390" x2="364" y2="390"/><polygon points="364,382 380,390 364,398"/>
+    <line x1="680" y1="390" x2="714" y2="390"/><polygon points="714,382 730,390 714,398"/>
+    <line x1="1100" y1="390" x2="1134" y2="390"/><polygon points="1134,382 1150,390 1134,398"/>
+  </g>
+  <text x="80" y="600" font-size="23" fill="#8a8a86">Замерено: VLM по времени пересегментирует (F1 0.20 против 0.51 у отдельного детектора)</text>
+  <text x="80" y="633" font-size="23" fill="#8a8a86">и в 60 раз медленнее. Поэтому время и смысл разделены между двумя моделями.</text>
+  <g font-size="24" fill="#c3c2b7">
+    <rect x="80" y="670" width="1440" height="170" rx="18" fill="#1c1c1b" stroke="#3a3a38" stroke-width="2"/>
+    <text x="120" y="718" font-size="30" font-weight="700" fill="#ffffff">Редактор, затем экспорт в контракте заказчика</text>
+    <text x="120" y="762">Человек проверяет черновик: двигает границу, режет, называет, помечает шаг проверенным.</text>
+    <text x="120" y="796">Активное время и число правок считает сам инструмент. Выгрузка JSON / CSV в целых миллисекундах,</text>
+    <text x="120" y="828">версия модели и схемы внутри. Сбой любого сервиса виден в предупреждениях, а не спрятан.</text>
+  </g>
+</svg>
