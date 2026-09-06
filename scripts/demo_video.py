@@ -33,6 +33,60 @@ def clean(text: str) -> str:
     return text.replace("\\", "").replace(":", " ").replace("'", "").replace(",", " ")
 
 
+def measure(text: str, size: int) -> float:
+    """Ширина строки в пикселях для того же шрифта, которым рисует ffmpeg.
+
+    PIL здесь только измеряет: рисование остаётся за ffmpeg, а подбирать кегль «на глаз»
+    по числу символов нельзя — «put down» и «illiquid» одной длины занимают разное место.
+    """
+    from PIL import ImageFont
+
+    key = ("font", size)
+    if key not in _FONTS:
+        try:
+            _FONTS[key] = ImageFont.truetype(FONT, size)
+        except OSError:
+            _FONTS[key] = ImageFont.load_default()
+    return _FONTS[key].getlength(text)
+
+
+def fit_label(action: str, noun: str, width: float) -> list[tuple[str, int, int]]:
+    """Как уместить «действие · предмет» в полосу заданной ширины.
+
+    Порядок уступок: сначала пробуем всё одной строкой крупно, потом двумя строками
+    (действие сверху, предмет снизу — в полосе высотой 30 px помещаются), потом только
+    действие, и лишь в самом конце обрезаем. Возвращает список (текст, кегль, сдвиг вниз).
+    """
+    room = max(width - 8, 0)
+    full = f"{action} {noun}".strip()
+    if not full:
+        return []
+
+    for size in (15, 13, 12):
+        if measure(full, size) <= room:
+            return [(full, size, (BAR - size) // 2)]
+
+    if noun:
+        for size in (13, 12, 11):
+            if max(measure(action, size), measure(noun, size)) <= room:
+                return [(action, size, 3), (noun, size, 3 + size + 1)]
+
+    for size in (13, 12, 11):
+        if measure(action, size) <= room:
+            return [(action, size, (BAR - size) // 2)]
+
+    # Ничего не влезло: обрезаем действие по месту, но не прячем — пустая полоса выглядит
+    # как сбой именования, а не как короткий шаг.
+    size = 11
+    text = action
+    while text and measure(text + "…", size) > room:
+        text = text[:-1]
+    return [(text + "…", size, (BAR - size) // 2)] if text else []
+
+
+_FONTS: dict = {}
+
+
 def row(steps: list[dict], duration: float, top: int, title: str) -> list[str]:
     """Полоса таймлайна. Координата y — абсолютная: в drawbox переменная h означает
     высоту самого прямоугольника, а не кадра, и выражение через неё уезжает за экран."""
@@ -61,19 +115,38 @@ def row(steps: list[dict], duration: float, top: int, title: str) -> list[str]:
         # Подпись обрезается под ширину полосы, а не прячется: скрытая подпись выглядит
         # как шаг без имени, и по картинке невозможно отличить короткий шаг от сбоя
         # именования. На самую узкую полосу ставится номер шага.
-        raw = f"{step['action']} {step.get('object') or ''}".strip()
-        fit = int((width - 10) / 8)  # ~8 px на символ при кегле 15
-        if raw and fit >= 3:
-            text = raw if len(raw) <= fit else raw[: max(fit - 1, 1)] + "…"
-            parts.append(
-                f"drawtext=fontfile={FONT}:text='{clean(text)}':x={start + 5:.1f}:y={y + 7}:"
-                f"fontsize=15:fontcolor=white"
-            )
+        lines = fit_label(clean(step["action"] or ""), clean(step.get("object") or ""), width)
+        if lines:
+            for text, size, shift in lines:
+                parts.append(
+                    f"drawtext=fontfile={FONT}:text='{text}':x={start + 4:.1f}:y={y + shift}:"
+                    f"fontsize={size}:fontcolor=white"
+                )
         elif width >= 14:
             parts.append(
                 f"drawtext=fontfile={FONT}:text='{index + 1}':x={start + 3:.1f}:y={y + 7}:"
                 f"fontsize=13:fontcolor=white"
             )
+    return parts
+
+
+def caption(steps: list[dict], title: str, y: int, colour: str) -> list[str]:
+    """Имя класса текущего шага целиком, крупно, включаясь на время самого шага.
+
+    Подпись внутри полосы таймлайна обрезается по её ширине: на шаге в полсекунды от
+    «pick up screwdriver» остаётся «pick…» или вовсе номер. Здесь текст живёт под роликом
+    и показывается, пока идёт свой шаг, — читается любой класс независимо от длины шага.
+    """
+    parts = []
+    for step in steps:
+        label = f"{step.get('action') or '?'}"
+        if step.get("object"):
+            label += f" · {step['object']}"
+        parts.append(
+            f"drawtext=fontfile={FONT}:text='{clean(title)}  {clean(label)}':"
+            f"x=16:y={y}:fontsize=20:fontcolor={colour}:"
+            f"enable='between(t,{float(step['start_sec']):.3f},{float(step['end_sec']):.3f})'"
+        )
     return parts
 
 
@@ -95,7 +168,10 @@ def main() -> None:
     truth = json.loads(args.gt.read_text(encoding="utf-8")) if args.gt else None
 
     rows = len(tracks) + (1 if truth else 0)
-    panel = 24 + rows * ROW
+    # Место под строку с именем класса: по одной на дорожку, чтобы эталон и предсказание
+    # читались рядом.
+    caption_height = 26 * (len(tracks) + (1 if truth else 0))
+    panel = 24 + rows * ROW + caption_height
     # Высота кадра после масштабирования известна заранее — значит все координаты
     # панели можно посчитать числами и не полагаться на выражения ffmpeg.
     meta = prediction["video"]
@@ -109,6 +185,15 @@ def main() -> None:
     for title, annotation in tracks:
         filters += row(annotation["steps"], duration, top, title)
         top += ROW
+
+    # Строки с именами классов — под полосами таймлайна.
+    caption_top = top + 6
+    if truth:
+        filters += caption(truth["steps"], "эталон:", caption_top, "0x9FB4C7")
+        caption_top += 26
+    for title, annotation in tracks:
+        filters += caption(annotation["steps"], f"{title}:", caption_top, "0xF2F5F9")
+        caption_top += 26
 
     span = RIGHT - LEFT
     if args.title:
