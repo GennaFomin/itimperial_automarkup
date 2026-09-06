@@ -20,6 +20,11 @@ VOCAB_PATH = os.getenv("PRAXIS_VOCAB") or None
 MAX_DURATION_SEC = float(os.getenv("PRAXIS_MAX_DURATION", "120"))
 MIN_HEIGHT = int(os.getenv("PRAXIS_MIN_HEIGHT", "720"))
 ALLOWED_SUFFIXES = {".mp4", ".mov"}
+# Папка с известными роликами: клиент присылает хэш файла вместо самого файла, и если
+# ролик здесь лежит, сервер берёт его с диска. Нужно там, где канал до сервера узкий.
+KNOWN_CLIPS_DIR = Path(os.getenv("PRAXIS_KNOWN_CLIPS_DIR")) if os.getenv("PRAXIS_KNOWN_CLIPS_DIR") else None
+# Высота лёгкой копии для плеера; 0 — отдавать оригинал.
+PREVIEW_HEIGHT = int(os.getenv("PRAXIS_PREVIEW_HEIGHT", "480"))
 
 # Какой сегментатор поднимать: stub пока пайплайна нет, дальше — реальный.
 # Ядровой change-point со штрафом за сегмент. Выбран измерением: на 90 роликах даёт

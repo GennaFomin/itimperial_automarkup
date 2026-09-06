@@ -180,27 +180,49 @@ async def create_job(
     file: UploadFile | None = None,
     pipeline: str | None = Form(None),
     tas_threshold: float | None = Form(None),
+    sha256: str | None = Form(None),
 ) -> dict:
     pipeline, tas_threshold = _job_options(pipeline, tas_threshold)
-    if file is None:
+    job_id = uuid.uuid4().hex[:12]
+
+    if file is None and sha256:
+        # Хэш вместо файла: по узкому каналу загрузка идёт минутами, а ролик сервер
+        # может уже знать — по готовому прогону или по папке известных роликов.
+        template = store.find_finished_by_hash(sha256, pipeline, tas_threshold)
+        if template is not None:
+            jobs.clone_finished(template, job_id)
+            record = store.get_video(job_id)
+            return {
+                "job_id": job_id,
+                "status": "done",
+                "created_at": record["created_at"],
+                "reused_from": template["id"],
+            }
+        found = jobs.source_by_hash(sha256)
+        if found is None:
+            raise ContractError(
+                404, errors.UNKNOWN_CLIP, "Ролик серверу неизвестен: загрузите файл", {"sha256": sha256}
+            )
+        path, filename = found
+        raw = path.read_bytes()
+    elif file is None:
         raise ContractError(
             422,
             errors.UNSUPPORTED_FORMAT,
             "Нужен файл: приём по ссылке не поддерживается",
             {"reason": "video_url"},
         )
-    job_id = uuid.uuid4().hex[:12]
-    raw = await file.read()
+    else:
+        raw = await file.read()
+        filename = file.filename or "video.mp4"
     try:
-        meta = jobs.prepare_upload(job_id, file.filename or "video.mp4", raw)
+        meta = jobs.prepare_upload(job_id, filename, raw)
     except UploadRejected as rejected:
         raise ContractError(422, rejected.code, rejected.message, rejected.details) from rejected
     except media.MediaError as error:
         raise ContractError(422, errors.DECODE_FAILED, str(error)) from error
 
-    store.create_video(
-        job_id, file.filename or "video.mp4", meta, pipeline=pipeline, tas_threshold=tas_threshold
-    )
+    store.create_video(job_id, filename, meta, pipeline=pipeline, tas_threshold=tas_threshold)
     background.add_task(jobs.process_video, job_id)
     return {
         "job_id": job_id,
@@ -412,14 +434,24 @@ async def post_activity(job_id: str, activity: ActivityIn) -> dict:
 # ------------------------------------------------------------------ медиа
 
 
+# Видео и кадры задания не меняются никогда: браузер может держать их у себя год и не
+# переспрашивать. По каналу, где каждое новое соединение стоит секунды, это решает.
+IMMUTABLE = {"Cache-Control": "public, max-age=31536000, immutable"}
+
+
+# Обычные `def`, а не `async`: ffmpeg внутри блокировал бы цикл событий, и пока
+# режется кадр, сервер не отвечал бы даже на запрос статуса.
 @router.get("/jobs/{job_id}/media")
-async def get_media(job_id: str) -> FileResponse:
+def get_media(job_id: str, original: bool = False) -> FileResponse:
+    """Ролик для плеера: лёгкая копия по умолчанию, `?original=1` — исходник."""
     _record(job_id)
-    return FileResponse(store.video_dir(job_id) / "source.mp4", media_type="video/mp4")
+    directory = store.video_dir(job_id)
+    path = directory / "source.mp4" if original else jobs.ensure_preview(directory)
+    return FileResponse(path, media_type="video/mp4", headers=IMMUTABLE)
 
 
 @router.get("/jobs/{job_id}/frame")
-async def get_frame(job_id: str, ms: int = Query(ge=0)) -> FileResponse:
+def get_frame(job_id: str, ms: int = Query(ge=0)) -> FileResponse:
     """Кадр по времени в миллисекундах — контракт не знает секунд (§1).
 
     Дисковый кэш общий с `/api/videos/{id}/frame`: ключ там уже считается в
@@ -433,7 +465,7 @@ async def get_frame(job_id: str, ms: int = Query(ge=0)) -> FileResponse:
             media.extract_frame(directory / "source.mp4", ms / 1000, path)
         except media.MediaError as error:
             raise ContractError(404, errors.DECODE_FAILED, str(error)) from error
-    return FileResponse(path, media_type="image/jpeg")
+    return FileResponse(path, media_type="image/jpeg", headers=IMMUTABLE)
 
 
 def is_contract_path(request: Request) -> bool:

@@ -31,6 +31,8 @@ INVALID_REVIEW = "INVALID_REVIEW"
 DEGRADED = "DEGRADED"
 # Настройки прогона в запросе на создание задания вне допустимого.
 INVALID_OPTIONS = "INVALID_OPTIONS"
+# Клиент прислал хэш вместо файла, а такого ролика сервер не знает: нужна загрузка.
+UNKNOWN_CLIP = "UNKNOWN_CLIP"
 
 
 class ContractError(HTTPException):

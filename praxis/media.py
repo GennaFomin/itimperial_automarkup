@@ -253,6 +253,26 @@ def transcode_for_upload(video: Path, out: Path, height: int = 384) -> Path:
     return out
 
 
+def transcode_preview(video: Path, out: Path, height: int = 480) -> Path | None:
+    """Лёгкая копия для плеера: 480p, faststart, звук сжат.
+
+    Оригинал в 4 МБ по узкому каналу идёт минуту, а индекс в конце файла не даёт
+    браузеру начать показ, пока не докачается всё. Без libx264 копия вышла бы больше
+    оригинала — тогда её нет, и плеер получает исходник.
+    """
+    if "libx264" not in " ".join(_upload_encoder()):
+        return None
+    _run(
+        [
+            "ffmpeg", "-y", "-v", "error", "-i", str(video),
+            "-vf", f"scale=-2:{height}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "28",
+            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "64k", "-movflags", "+faststart",
+            str(out),
+        ]
+    )
+    return out if out.exists() else None
+
+
 def gray_frames(video: Path, fps: int | None = None, width: int = 64, height: int = 36) -> np.ndarray:
     """Кадры ролика в оттенках серого как матрица (кадры, высота, ширина).
 

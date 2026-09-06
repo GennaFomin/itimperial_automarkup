@@ -401,6 +401,7 @@ def process_video(video_id: str) -> None:
         perception = perceive(source)
         motion = [round(float(value), 4) for value in perception.motion]
         strip = media.filmstrip(source, meta.duration_sec, directory / "strip")
+        ensure_preview(directory)
         decode_ms = int(round((time.perf_counter() - at_decode) * 1000))
         checkpoint("recognize")
 
@@ -525,6 +526,7 @@ def prepare_upload(video_id: str, filename: str, raw: bytes) -> dict:
     source.write_bytes(raw)
 
     meta = media.probe(source)
+    meta["sha256"] = hashlib.sha256(raw).hexdigest()
     if meta["duration_sec"] > config.MAX_DURATION_SEC:
         raise UploadRejected(
             errors.VIDEO_TOO_LONG,
@@ -543,6 +545,66 @@ def prepare_upload(video_id: str, filename: str, raw: bytes) -> dict:
             min_height=config.MIN_HEIGHT,
         )
     return meta
+
+
+def ensure_preview(directory: Path) -> Path:
+    """Что отдавать плеру: лёгкая копия, если её можно собрать, иначе оригинал."""
+    source = directory / "source.mp4"
+    preview = directory / "preview.mp4"
+    if preview.exists():
+        return preview
+    if config.PREVIEW_HEIGHT <= 0 or not source.exists():
+        return source
+    try:
+        built = media.transcode_preview(source, preview, config.PREVIEW_HEIGHT)
+    except media.MediaError:
+        built = None
+    return built or source
+
+
+_known_clips: dict[Path, tuple[float, int, str]] = {}
+
+
+def known_clip(sha256: str) -> Path | None:
+    """Ролик из папки известных по хэшу. Хэши считаются лениво и запоминаются по mtime."""
+    folder = config.KNOWN_CLIPS_DIR
+    if not folder or not folder.is_dir():
+        return None
+    for path in sorted(folder.iterdir()):
+        if path.suffix.lower() not in config.ALLOWED_SUFFIXES or not path.is_file():
+            continue
+        stat = path.stat()
+        cached = _known_clips.get(path)
+        if cached is None or cached[0] != stat.st_mtime or cached[1] != stat.st_size:
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            _known_clips[path] = (stat.st_mtime, stat.st_size, digest)
+        if _known_clips[path][2] == sha256:
+            return path
+    return None
+
+
+def source_by_hash(sha256: str) -> tuple[Path, str] | None:
+    """Откуда взять исходник по хэшу: у прежнего задания или из папки известных роликов."""
+    for record in store.find_any_by_hash(sha256):
+        source = store.video_path(record["id"]) / "source.mp4"
+        if source.exists():
+            return source, record["filename"]
+    path = known_clip(sha256)
+    return (path, path.name) if path else None
+
+
+def clone_finished(template: dict, video_id: str) -> None:
+    """Готовый прогон того же файла как новое задание: запись и файлы, без повторного счёта."""
+    source_dir = store.video_path(template["id"])
+    target_dir = store.video_dir(video_id)
+    for name in ("source.mp4", "preview.mp4"):
+        if (source_dir / name).exists():
+            shutil.copy2(source_dir / name, target_dir / name)
+    for name in ("strip", "frames"):
+        if (source_dir / name).is_dir():
+            shutil.copytree(source_dir / name, target_dir / name, dirs_exist_ok=True)
+    store.clone_video(template, video_id, template["filename"])
+    store.log_event(video_id, "run", {"reused_from": template["id"], "error": None})
 
 
 def _artifacts(directory: Path) -> list[dict]:

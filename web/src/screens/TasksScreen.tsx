@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { USING_MOCK, getStats } from '../api/client'
 import { STATUS_LABEL, type JobStatus, type Stats } from '../api/types'
 import { formatDuration } from '../lib/time'
+import { warm } from '../lib/prefetch'
 import { useTasksStore, type Task } from '../store/tasksStore'
 import { toast } from '../store/toastStore'
 import { CreateTaskDialog } from './CreateTaskDialog'
@@ -62,6 +63,12 @@ export function TasksScreen() {
   }, [reviewedCount])
 
   const shown = tasks.filter((task) => matches(task, filter))
+
+  // Готовые задачи прогреваются в кэш браузера заранее: открытие тогда не ждёт канала.
+  useEffect(() => {
+    if (USING_MOCK) return
+    warm(tasks.filter((t) => t.status === 'done' || t.status === 'done_with_errors').map((t) => t.job_id))
+  }, [tasks])
 
   // Один запрос на весь список вместо отдельного поллинга на каждую карточку.
   useEffect(() => {

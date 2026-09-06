@@ -94,6 +94,8 @@ def init_db() -> None:
             # NULL — умолчание сервера из конфигурации.
             "ALTER TABLE videos ADD COLUMN pipeline TEXT",
             "ALTER TABLE videos ADD COLUMN tas_threshold REAL",
+            # Хэш исходника: по нему готовый прогон переиспользуется без загрузки файла.
+            "ALTER TABLE videos ADD COLUMN sha256 TEXT",
         ):
             try:
                 connection.execute(statement)
@@ -111,7 +113,8 @@ def create_video(
     with connect() as connection:
         connection.execute(
             "INSERT INTO videos (id, filename, duration_sec, fps, width, height, status,"
-            " created_at, pipeline, tas_threshold) VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)",
+            " created_at, pipeline, tas_threshold, sha256)"
+            " VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)",
             (
                 video_id,
                 filename,
@@ -122,6 +125,56 @@ def create_video(
                 now(),
                 pipeline,
                 tas_threshold,
+                meta.get("sha256"),
+            ),
+        )
+
+
+def find_finished_by_hash(
+    sha256: str, pipeline: str | None, tas_threshold: float | None
+) -> dict | None:
+    """Готовый прогон того же файла с теми же настройками, самый свежий."""
+    with connect() as connection:
+        rows = connection.execute(
+            "SELECT * FROM videos WHERE sha256 = ? AND status = 'done' AND prediction IS NOT NULL"
+            " ORDER BY created_at DESC",
+            (sha256,),
+        ).fetchall()
+    for row in rows:
+        record = dict(row)
+        if record.get("pipeline") == pipeline and record.get("tas_threshold") == tas_threshold:
+            return record
+    return None
+
+
+def find_any_by_hash(sha256: str) -> list[dict]:
+    """Все задания с этим файлом, свежие первыми: исходник можно взять у любого."""
+    with connect() as connection:
+        rows = connection.execute(
+            "SELECT * FROM videos WHERE sha256 = ? ORDER BY created_at DESC", (sha256,)
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def clone_video(template: dict, video_id: str, filename: str) -> None:
+    """Новая запись с результатом готового прогона: прогноз, полоса движения, плёнка.
+
+    Правка человека не копируется — это его работа над тем заданием, а не свойство ролика.
+    """
+    stamp = now()
+    with connect() as connection:
+        connection.execute(
+            "INSERT INTO videos (id, filename, duration_sec, fps, width, height, status, stage,"
+            " processing_sec, prediction, warnings, motion, filmstrip, alternatives,"
+            " created_at, started_at, finished_at, pipeline, tas_threshold, sha256)"
+            " VALUES (?, ?, ?, ?, ?, ?, 'done', 'done', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                video_id, filename, template["duration_sec"], template["fps"],
+                template["width"], template["height"], template.get("processing_sec"),
+                template["prediction"], template.get("warnings"), template.get("motion"),
+                template.get("filmstrip"), template.get("alternatives"),
+                stamp, stamp, stamp, template.get("pipeline"), template.get("tas_threshold"),
+                template.get("sha256"),
             ),
         )
 

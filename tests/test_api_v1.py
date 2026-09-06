@@ -697,3 +697,93 @@ def test_limits_list_the_pipelines_and_defaults(client):
     assert {p["id"] for p in limits["pipelines"]} == {"learned-boundaries", "tsm-kernel"}
     assert limits["pipeline_default"] == config.PIPELINE
     assert 0 < limits["tas_threshold_default"] < 1
+
+
+def _sha256(path) -> str:
+    import hashlib
+
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_hash_instead_of_file_reuses_a_finished_run(client, clips):
+    """По узкому каналу файл не шлют: клиент присылает хэш, сервер отдаёт готовый прогон."""
+    first = upload(client, clips["ok"])
+    wait_done(client, first)
+    prediction = client.get(f"/api/v1/jobs/{first}/prediction").json()
+
+    response = client.post("/api/v1/jobs", data={"sha256": _sha256(clips["ok"])})
+    assert response.status_code == 202, response.text
+    body = response.json()
+    assert body["status"] == "done" and body["reused_from"] == first
+    clone = body["job_id"]
+    assert clone != first
+    assert client.get(f"/api/v1/jobs/{clone}").json()["status"] == "done"
+    cloned = client.get(f"/api/v1/jobs/{clone}/prediction").json()
+    assert cloned["job_id"] == clone
+    assert [s["start_ms"] for s in cloned["segments"]] == [s["start_ms"] for s in prediction["segments"]]
+    assert client.get(f"/api/v1/jobs/{clone}/media").status_code == 200
+    import json as _json
+
+    payloads = [e["payload"] for e in store.events(clone)]
+    payloads = [_json.loads(p) if isinstance(p, str) else p for p in payloads]
+    assert any(p.get("reused_from") == first for p in payloads)
+
+    # Другие настройки нарезки — другой прогон, а не копия готового.
+    other = client.post("/api/v1/jobs", data={"sha256": _sha256(clips["ok"]), "pipeline": "tsm-kernel"})
+    assert other.status_code == 202 and other.json()["status"] == "queued"
+    assert client.get(f"/api/v1/jobs/{other.json()['job_id']}").json()["options"]["pipeline"] == "tsm-kernel"
+
+
+def test_hash_of_a_known_clip_is_taken_from_disk(client, clips, tmp_path, monkeypatch):
+    folder = tmp_path / "known"
+    folder.mkdir()
+    import shutil
+
+    shutil.copy(clips["ok"], folder / "demo.mp4")
+    monkeypatch.setattr(config, "KNOWN_CLIPS_DIR", folder)
+
+    response = client.post("/api/v1/jobs", data={"sha256": _sha256(clips["ok"])})
+    assert response.status_code == 202, response.text
+    job_id = response.json()["job_id"]
+    job = wait_done(client, job_id)
+    assert job["status"] == "done" and job["filename"] == "demo.mp4"
+
+
+def test_unknown_hash_asks_for_the_file(client, monkeypatch):
+    monkeypatch.setattr(config, "KNOWN_CLIPS_DIR", None)
+    response = client.post("/api/v1/jobs", data={"sha256": "0" * 64})
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "UNKNOWN_CLIP"
+
+
+def test_media_serves_a_light_faststart_copy_and_caches_forever(client, clips):
+    import struct
+
+    job_id = upload(client, clips["ok"])
+    wait_done(client, job_id)
+    preview = config.WORK_DIR / job_id / "preview.mp4"
+    source = config.WORK_DIR / job_id / "source.mp4"
+    assert preview.exists() and preview.stat().st_size < source.stat().st_size
+
+    # faststart: индекс moov впереди mdat, иначе браузер ждёт весь файл.
+    atoms = []
+    with preview.open("rb") as handle:
+        pos = 0
+        while True:
+            head = handle.read(8)
+            if len(head) < 8:
+                break
+            size, kind = struct.unpack(">I4s", head)
+            atoms.append(kind.decode())
+            pos += size
+            handle.seek(pos)
+    assert atoms.index("moov") < atoms.index("mdat")
+
+    response = client.get(f"/api/v1/jobs/{job_id}/media")
+    assert response.status_code == 200
+    assert "immutable" in response.headers["cache-control"]
+    assert int(response.headers["content-length"]) == preview.stat().st_size
+    original = client.get(f"/api/v1/jobs/{job_id}/media?original=1")
+    assert int(original.headers["content-length"]) == source.stat().st_size
+    frame = client.get(f"/api/v1/jobs/{job_id}/frame?ms=500")
+    assert "immutable" in frame.headers["cache-control"]

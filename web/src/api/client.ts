@@ -90,7 +90,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export interface CreateJobInput {
-  file: File
+  /** Файл для загрузки; без него нужен `sha256` уже известного серверу ролика. */
+  file?: File | null
+  sha256?: string
   /** Только для мока: какой сценарий отыграть. Реальный бэкенд поле игнорирует. */
   scenario?: string
   /** Длительность загруженного ролика, чтобы мок растянул фикстуру под него. */
@@ -100,14 +102,18 @@ export interface CreateJobInput {
   tasThreshold?: number | null
 }
 
-export async function createJob(input: CreateJobInput): Promise<{ job_id: string }> {
+export async function createJob(
+  input: CreateJobInput,
+): Promise<{ job_id: string; status: string; reused_from?: string }> {
   if (USING_MOCK) {
     const mock = await useMock()
     const job = mock.createJob((input.scenario as never) ?? 'ok', input.durationMs ?? null)
-    return { job_id: job.job_id }
+    return { job_id: job.job_id, status: 'queued' }
   }
   const form = new FormData()
-  form.append('file', input.file)
+  // Хэш вместо файла: если сервер уже знает ролик, загрузка по узкому каналу не нужна.
+  if (input.file) form.append('file', input.file)
+  else if (input.sha256) form.append('sha256', input.sha256)
   if (input.pipeline) form.append('pipeline', input.pipeline)
   if (input.tasThreshold != null) form.append('tas_threshold', String(input.tasThreshold))
   return request(`${V1}/jobs`, { method: 'POST', body: form })

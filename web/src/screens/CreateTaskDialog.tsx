@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { USING_MOCK, createJob, getLimits, getVocab } from '../api/client'
+import { ApiError, USING_MOCK, createJob, getLimits, getVocab } from '../api/client'
+import { sha256File } from '../lib/sha256'
+import { toast } from '../store/toastStore'
 import type { Limits, Vocabulary } from '../api/types'
 import { formatDuration } from '../lib/time'
 import { useTasksStore } from '../store/tasksStore'
@@ -31,6 +33,7 @@ export function CreateTaskDialog({ onClose, onCreated }: Props) {
   const [pipeline, setPipeline] = useState('')
   const [threshold, setThreshold] = useState('')
   const [busy, setBusy] = useState(false)
+  const [stage, setStage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const inputRef = useRef<HTMLInputElement>(null)
@@ -110,19 +113,42 @@ export function CreateTaskDialog({ onClose, onCreated }: Props) {
     setBusy(true)
     setError(null)
     try {
-      const { job_id } = await createJob({
-        file: picked.file,
+      const options = {
         scenario,
         durationMs: picked.durationMs,
         pipeline: pipeline || null,
         tasThreshold: threshold ? Number(threshold) : null,
-      })
+      }
+      // Сначала хэш: известный серверу ролик обходится без загрузки, а готовый
+      // прогон с теми же настройками возвращается сразу. Иначе — обычная загрузка.
+      let created: { job_id: string; status: string; reused_from?: string } | null = null
+      if (!USING_MOCK) {
+        setStage('Считаю хэш ролика…')
+        const sha256 = await sha256File(picked.file)
+        setStage('Спрашиваю сервер, знает ли он ролик…')
+        try {
+          created = await createJob({ sha256, ...options })
+          toast.info(
+            created.reused_from
+              ? 'Ролик уже размечен: результат взят с сервера без загрузки'
+              : 'Ролик уже есть на сервере: загрузка не нужна',
+          )
+        } catch (e) {
+          if (!(e instanceof ApiError) || e.code !== 'UNKNOWN_CLIP') throw e
+        }
+      }
+      if (!created) {
+        setStage(`Загружаю ${(picked.file.size / 1024 / 1024).toFixed(1)} МБ…`)
+        created = await createJob({ file: picked.file, ...options })
+      }
+      const { job_id } = created
       if (title.trim()) setTitle(job_id, title.trim())
       onCreated()
       onClose()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось создать задачу')
       setBusy(false)
+      setStage(null)
     }
   }
 
@@ -306,7 +332,7 @@ export function CreateTaskDialog({ onClose, onCreated }: Props) {
               Отмена
             </button>
             <button className="btn btn--primary" onClick={submit} disabled={busy || !picked}>
-              {busy ? 'Загружаем…' : 'В очередь на разметку'}
+              {busy ? (stage ?? 'Загружаем…') : 'В очередь на разметку'}
             </button>
           </div>
         </div>
