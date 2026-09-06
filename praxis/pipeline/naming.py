@@ -193,7 +193,9 @@ class HttpNamer:
         # Закраска фона — последним шагом, уже над отобранными кадрами: детектор рук стоит
         # миллисекунды на кадр, и тратить их на кадры, которые всё равно выбросит склейка,
         # незачем.
-        if config.HANDS_BASE_URL and frames:
+        # Режим "none" — сервис рук поднят, но кадры не трогаются: так работает подача
+        # признаков текстом, где изображение должно остаться нетронутым.
+        if config.HANDS_BASE_URL and config.HANDS_MODE != "none" and frames:
             frames = self._focus(frames)
         return frames, indices, grid_fps
 
@@ -457,6 +459,57 @@ class HttpNamer:
             return f"недоступен: {error}"
         return None
 
+    def _hand_note(self, frames: list[str]) -> str | None:
+        """Строка про кисть на этом шаге: сторона, раскрытие в начале и в конце, путь.
+
+        Считается здесь, а не в сервисе: сервис детектора намеренно без памяти о ролике —
+        он отвечает про кадр, а «за шаг раскрытие сузилось» это уже про последовательность.
+        """
+        if not config.HANDS_BASE_URL or len(frames) < 3:
+            return None
+        try:
+            answer = self._post(
+                "/pose", {"frames": frames}, base_url=config.HANDS_BASE_URL
+            )
+        except (urllib.error.URLError, OSError, TimeoutError, ValueError):
+            return None
+
+        leading = []
+        for frame in answer.get("frames", []):
+            hands = frame.get("hands") or []
+            if hands:
+                leading.append(max(hands, key=lambda item: item.get("score", 0.0)))
+        if len(leading) < 3:
+            return None
+
+        def aperture(hand: dict) -> float | None:
+            world = hand.get("world") or []
+            if len(world) < 9:
+                return None
+            return sum((world[4][axis] - world[8][axis]) ** 2 for axis in range(3)) ** 0.5
+
+        values = [aperture(hand) for hand in leading]
+        values = [value for value in values if value is not None]
+        if len(values) < 3:
+            return None
+        third = max(1, len(values) // 3)
+        start = sum(values[:third]) / third
+        end = sum(values[-third:]) / third
+
+        path = 0.0
+        previous = None
+        for hand in leading:
+            wrist = hand["landmarks"][0]
+            if previous is not None:
+                path += ((wrist[0] - previous[0]) ** 2 + (wrist[1] - previous[1]) ** 2) ** 0.5
+            previous = wrist
+        sides = {hand.get("side") for hand in leading if hand.get("side")}
+        side = "две руки" if len(sides) > 1 else ("левая рука" if "Left" in sides else "правая рука")
+        return (
+            f"{side}, раскрытие кисти {start * 100:.1f} → {end * 100:.1f} см,"
+            f" запястье прошло {path:.2f} доли кадра"
+        )
+
     def _post(self, path: str, payload: dict, base_url: str | None = None) -> dict:
         request = urllib.request.Request(
             (base_url.rstrip("/") if base_url else self.base_url) + path,
@@ -506,9 +559,10 @@ class RemoteVlmNamer(HttpNamer):
             "pairs": vocabulary.pairs,
             "frame_labels": config.VLM_FRAME_LABELS,
             "video_mode": config.VLM_VIDEO_MODE,
+            "marked_kind": config.HANDS_MODE,
             # Про овал модели надо сказать словами: иначе она принимает его за предмет
             # сцены и начинает описывать саму отметку.
-            "marked": bool(config.HANDS_BASE_URL) and config.HANDS_MODE == "circle",
+            "marked": bool(config.HANDS_BASE_URL) and config.HANDS_MODE in {"circle", "skeleton"},
             # Три флага ниже пропали при переписывании истории и без них сервис молча
             # притягивал ответ к словарю Assembly101 на любом домене.
             "open_vocabulary": config.OPEN_VOCABULARY,
@@ -516,6 +570,13 @@ class RemoteVlmNamer(HttpNamer):
             "context_frames": config.CONTEXT_FRAMES > 0,
             "domain": config.DOMAIN or vocabulary.description or None,
         }
+
+        # Признаки кисти считаются по тем же кадрам, что уходят в модель.
+        notes = (
+            {step.id: self._hand_note(frames[step.id]) for step in steps}
+            if config.HANDS_NOTE and config.HANDS_BASE_URL
+            else {}
+        )
 
         try:
             hints = self._objects_first(frames, vocabulary, base) if config.VLM_TWO_STAGE else {}
@@ -533,6 +594,10 @@ class RemoteVlmNamer(HttpNamer):
                             }
                             if shots[step.id][2] > 0
                             else {}
+                        ),
+                        **(
+                            {"hand_note": notes[step.id]}
+                            if notes.get(step.id) else {}
                         ),
                         **hints.get(step.id, {}),
                     }

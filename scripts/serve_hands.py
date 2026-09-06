@@ -59,7 +59,8 @@ class FocusRequest(BaseModel):
     # Что делать с кадром:
     #   "white"  — всё вне области залить белым;
     #   "circle" — ничего не убирать, обвести область красным овалом;
-    #   "dim"    — притушить всё вне области, оставив различимым.
+    #   "dim"    — притушить всё вне области, оставив различимым;
+    #   "skeleton" — нарисовать скелет кисти поверх кадра, ничего не убирая.
     # Обводка — визуальный промптинг: модель притягивается к обведённой области, но сцена
     # остаётся целой. Это важно, потому что прошлый замер кропа по предмету дал 0.209
     # против 0.358 без него — контекст нужен, чтобы предмет вообще опознать.
@@ -144,6 +145,9 @@ def paint(image: Image.Image, circles: list[tuple[float, float, float]], request
     boxes = regions(image, circles, request.margin, request.min_radius)
     image = image.convert("RGB")
 
+    if request.mode == "skeleton":
+        return image  # скелет рисуется отдельно: ему нужны суставы, а не круги
+
     if request.mode == "circle":
         # Одна фигура на кадр, а не по одной на кисть: предмет находится между руками, и
         # два овала указывали бы на руки по отдельности, а не на то, с чем работают.
@@ -174,9 +178,110 @@ def paint(image: Image.Image, circles: list[tuple[float, float, float]], request
     return Image.composite(image, background, mask)
 
 
+class PoseRequest(BaseModel):
+    frames: list[str]  # JPEG в base64, по порядку
+    times: list[float] = []  # момент каждого кадра в секундах ролика
+
+
+def pose_of(image: Image.Image) -> list[dict]:
+    """Поза каждой кисти на кадре: суставы в кадре и в метрах, сторона, уверенность.
+
+    Метрические координаты — то, ради чего это заводится: их ждёт ретаргетинг на робота
+    (dex-retargeting и его сородичи работают с векторами между суставами, а не с
+    пикселями). MediaPipe отдаёт их относительно центра кисти, то есть поза без места в
+    сцене; место берётся из координат в кадре.
+    """
+    import mediapipe as mp
+
+    probe = image
+    scale = 1.0
+    if image.width < 1000:
+        scale = 1000 / image.width
+        probe = image.resize((1000, int(image.height * scale)), Image.BILINEAR)
+
+    answer = state["detector"].detect(
+        mp.Image(image_format=mp.ImageFormat.SRGB, data=np.array(probe.convert("RGB")))
+    )
+    hands = []
+    for index, landmarks in enumerate(answer.hand_landmarks):
+        world = answer.hand_world_landmarks[index] if answer.hand_world_landmarks else []
+        side = answer.handedness[index][0] if answer.handedness else None
+        points = [[round(p.x, 4), round(p.y, 4), round(p.z, 4)] for p in landmarks]
+        metric = [[round(p.x, 4), round(p.y, 4), round(p.z, 4)] for p in world]
+        hands.append(
+            {
+                "side": side.category_name if side else "",
+                "score": round(float(side.score), 3) if side else 0.0,
+                "landmarks": points,
+                "world": metric,
+            }
+        )
+    return hands
+
+
+@app.post("/pose")
+def pose(request: PoseRequest) -> dict:
+    """Поза кистей на каждом поданном кадре. Кадр без рук отдаётся пустым списком.
+
+    Отдаём сырое: суставы, сторону, уверенность. Производные величины (раскрытие,
+    скорость, длина пути) считает клиент — он знает времена кадров и границы шагов, а
+    сервис намеренно остаётся без памяти о ролике.
+    """
+    started = time.perf_counter()
+    frames = []
+    for index, encoded in enumerate(request.frames):
+        image = Image.open(io.BytesIO(base64.b64decode(encoded))).convert("RGB")
+        moment = request.times[index] if index < len(request.times) else float(index)
+        frames.append({"t": round(moment, 3), "hands": pose_of(image)})
+    seen = sum(1 for frame in frames if frame["hands"])
+    return {
+        "frames": frames,
+        "frames_with_hands": seen,
+        "model": state["model_id"],
+        "elapsed_sec": round(time.perf_counter() - started, 2),
+    }
+
+
 @app.get("/health")
 def health() -> dict:
     return {"ready": "detector" in state, "model": state.get("model_id")}
+
+
+BONES = (
+    (0, 1), (1, 2), (2, 3), (3, 4),
+    (0, 5), (5, 6), (6, 7), (7, 8),
+    (9, 10), (10, 11), (11, 12),
+    (13, 14), (14, 15), (15, 16),
+    (0, 17), (17, 18), (18, 19), (19, 20),
+    (5, 9), (9, 13), (13, 17),
+)
+SIDE_COLOR = {"Left": (90, 200, 255), "Right": (255, 170, 60)}
+
+
+def draw_skeleton(image: Image.Image, hands: list[dict]) -> Image.Image:
+    """Скелет кисти поверх кадра: суставы и связи, цвет по стороне руки.
+
+    В отличие от закраски и обводки, сцена не трогается вовсе — добавляются только тонкие
+    линии. Это самый мягкий из способов показать модели, где рука и как сложены пальцы.
+    """
+    if not hands:
+        return image
+    marked = image.copy()
+    draw = ImageDraw.Draw(marked)
+    width, height = image.size
+    for hand in hands:
+        points = [(p[0] * width, p[1] * height) for p in hand["landmarks"]]
+        colour = SIDE_COLOR.get(hand.get("side", ""), (200, 200, 200))
+        for start, end in BONES:
+            if start < len(points) and end < len(points):
+                draw.line([points[start], points[end]], fill=colour, width=max(2, width // 500))
+        for index, point in enumerate(points):
+            radius = max(3, width // 300) if index in (0, 4, 8) else max(2, width // 500)
+            draw.ellipse(
+                [point[0] - radius, point[1] - radius, point[0] + radius, point[1] + radius],
+                fill=colour,
+            )
+    return marked
 
 
 @app.post("/focus")
@@ -194,12 +299,18 @@ def focus(request: FocusRequest) -> dict:
         frames, last = [], []
         for encoded in segment.frames:
             image = Image.open(io.BytesIO(base64.b64decode(encoded))).convert("RGB")
-            circles = hands_on(image)
-            seen += bool(circles)
-            if circles:
-                last = circles
-            painted += bool(last)
-            shown = paint(image, last, request)
+            if request.mode == "skeleton":
+                hands = pose_of(image)
+                seen += bool(hands)
+                painted += bool(hands)
+                shown = draw_skeleton(image, hands)
+            else:
+                circles = hands_on(image)
+                seen += bool(circles)
+                if circles:
+                    last = circles
+                painted += bool(last)
+                shown = paint(image, last, request)
             buffer = io.BytesIO()
             shown.save(buffer, format="JPEG", quality=request.quality)
             frames.append(base64.b64encode(buffer.getvalue()).decode())
