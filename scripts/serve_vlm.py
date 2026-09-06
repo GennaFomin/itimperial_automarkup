@@ -103,6 +103,12 @@ MAX_IMAGES = int(os.getenv("PRAXIS_VLM_MAX_IMAGES", "20"))
 # «unknown» во всех 87 шагах. Для них бюджет поднимается переменной.
 MAX_NEW_TOKENS = int(os.getenv("PRAXIS_VLM_MAX_NEW_TOKENS", "160"))
 
+# Сколько кадров видеотракта класть в один проход. Раньше сегменты шли по одному: на 24 ГБ
+# группировать их казалось рискованным, пока кадров на шаг было не ограничено. После
+# склейки дублей шаг занимает 7-24 кадра, и несколько шагов в проход помещаются — а между
+# одиночными вызовами карта простаивала.
+MAX_VIDEO_FRAMES = int(os.getenv("PRAXIS_VLM_MAX_VIDEO_FRAMES", "28"))
+
 # Сколько кандидатов оценивать за один проход при скоринге.
 SCORE_BATCH = 8
 
@@ -134,6 +140,10 @@ class Segment(BaseModel):
     # Места кадров на временной сетке шага. Последовательность бывает неравномерной: часть
     # кадров отсеяна как повтор предыдущего, и подряд идущие номера соврали бы про время.
     frame_indices: list[int] | None = None
+    # Готовая строка про кисть на этом шаге: сторона, раскрытие в начале и в конце, путь
+    # запястья. Считает клиент — у него есть времена кадров и границы шага; сервис только
+    # вставляет её в промпт.
+    hand_note: str | None = None
     # Короткий список гипотез для режима скоринга: [[действие, предмет], ...].
     candidates: list[list[str]] | None = None
     # Что модель сказала про соседние шаги на первом проходе.
@@ -150,9 +160,11 @@ class Request(BaseModel):
     # врезает в промпт отметки «<0.5 seconds>». То есть модель видит движение между
     # кадрами, а не набор стоп-кадров, — а именно этого не хватало на глаголах состояния.
     video_mode: bool = False
-    # Кадры пришли с красным овалом вокруг рабочей зоны. Про отметку нужно сказать в
-    # промпте: без объяснения модель считает её частью сцены и описывает сам овал.
+    # Кадры пришли с пометкой рабочей зоны. Про неё нужно сказать в промпте: без
+    # объяснения модель считает её частью сцены и описывает саму пометку.
     marked: bool = False
+    # Чем именно помечено: "circle" — красный овал вокруг рук, "skeleton" — скелет кисти.
+    marked_kind: str = "circle"
     # Подписывать ли кадры их позицией во времени: проверяется замером, поэтому флаг.
     frame_labels: bool = True
     # "both" — спросить сразу пару; "object" — только предмет (первая ступень).
@@ -422,15 +434,16 @@ def _annotate_video(request: Request, build_prompt) -> dict:
     врезает перед каждым патчем отметку «<0.5 seconds>». Подписи кадров текстом здесь не
     нужны — время уже внутри представления.
 
-    Батч по одному сегменту: у видео на проход приходится больше зрительных токенов, чем у
-    той же пачки картинок, и группировать их на 24 ГБ рискованно.
+    Батч набирается по числу КАДРОВ, а не сегментов: длина шага переменная, и фиксированный
+    батч из четырёх сегментов на крупной нарезке дал бы под сотню кадров за проход.
     """
     from transformers.video_utils import VideoMetadata
 
     model, processor = state["model"], state["processor"]
+    processor.tokenizer.padding_side = "left"
     started = time.perf_counter()
-    answers: list[str] = []
 
+    prepared = []
     for segment in request.segments:
         frames = [decode(frame) for frame in segment.frames]
         fps = segment.fps or 2.0
@@ -454,24 +467,40 @@ def _annotate_video(request: Request, build_prompt) -> dict:
             }
         ]
         text = processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+        prepared.append((text, frames, metadata))
+
+    batches: list[tuple[int, int]] = []
+    start = 0
+    while start < len(prepared):
+        end, count = start, 0
+        while end < len(prepared) and (
+            end == start or count + len(prepared[end][1]) <= MAX_VIDEO_FRAMES
+        ):
+            count += len(prepared[end][1])
+            end += 1
+        batches.append((start, end))
+        start = end
+
+    answers: list[str] = []
+    for start, end in batches:
+        chunk = prepared[start:end]
         inputs = processor(
-            text=[text],
-            videos=[frames],
-            video_metadata=[metadata],
+            text=[item[0] for item in chunk],
+            videos=[item[1] for item in chunk],
+            video_metadata=[item[2] for item in chunk],
             cap_pixels_per_frame=True,
-            # Выборку кадров делаем мы, а не процессор. По умолчанию он прореживает
-            # поданное до собственных двух кадров в секунду, ориентируясь на заявленную
-            # частоту: шаг, нарезанный на восьми кадрах при 4 к/с, дошёл бы до модели
-            # четырьмя. Мы уже отобрали ровно то, что хотим показать.
+            # Выборку кадров делаем мы, а не процессор: по умолчанию он прореживает
+            # поданное до собственных двух кадров в секунду по заявленной частоте.
             do_sample_frames=False,
+            padding=True,
             return_tensors="pt",
         ).to(model.device)
         with torch.inference_mode():
             generated = model.generate(**inputs, max_new_tokens=MAX_NEW_TOKENS, do_sample=False)
-        answers.append(
+        answers.extend(
             processor.batch_decode(
                 generated[:, inputs["input_ids"].shape[1] :], skip_special_tokens=True
-            )[0]
+            )
         )
 
     results = [
@@ -480,9 +509,52 @@ def _annotate_video(request: Request, build_prompt) -> dict:
     ]
     return {
         "results": results,
-        "model": state["model_id"] + " (video)",
+        "model": state["model_id"] + f" (video, батч по {MAX_VIDEO_FRAMES} кадров)",
         "elapsed_sec": round(time.perf_counter() - started, 2),
     }
+
+
+MARK_NOTE = {
+    "circle": "Красным овалом на кадрах отмечена рабочая зона — руки и то, с чем они"
+    " работают. Отвечай про предмет внутри овала, а сам овал не описывай: это наша"
+    " пометка, а не часть сцены.",
+    "skeleton": "Поверх кадров нарисован скелет кисти: точки суставов и связи между ними."
+    " Это наша пометка, а не часть сцены — описывать её не нужно, но по ней видно, какой"
+    " рукой работают и как сложены пальцы.",
+}
+
+
+def open_prompt(request: "Request", segment) -> str:
+    """Промпт свободной генерации со всем контекстом шага.
+
+    Общая функция для обоих сервисов — на transformers и на vLLM. Сравнивать движки можно
+    только при одинаковом тексте, а разошлись бы они на первой же правке промпта.
+    """
+    lines = []
+    if segment.previous:
+        lines.append(f"Предыдущий шаг ролика: {segment.previous}.")
+    if segment.following:
+        lines.append(f"Следующий шаг ролика: {segment.following}.")
+    if lines:
+        lines.append(
+            "Учти порядок: взятый предмет потом куда-то кладут, открытое потом закрывают,"
+            " и два соседних шага обычно разные."
+        )
+    if request.marked:
+        lines.append(MARK_NOTE.get(request.marked_kind, MARK_NOTE["circle"]))
+    if getattr(segment, "hand_note", None):
+        # Замер на 87 шагах: кисть закрывается на девяти шагах «взял» из одиннадцати —
+        # признак направления времени, которого по картинке модели не хватало.
+        lines.append(
+            f"Измерено детектором рук: {segment.hand_note}."
+            " Сужающееся раскрытие означает, что предмет взяли в руку, расширяющееся —"
+            " что отпустили. Это подсказка, а не приговор: детектор ошибается."
+        )
+    return OPEN_PROMPT.format(
+        domain=request.domain or DEFAULT_DOMAIN,
+        context=("\n" + "\n".join(lines) + "\n") if lines else "",
+        language="по-английски" if request.language == "en" else "по-русски",
+    )
 
 
 @app.post("/annotate")
@@ -508,11 +580,7 @@ def annotate(request: Request) -> dict:
                 " это наша пометка, а не часть сцены."
             )
         if request.open_vocabulary:
-            return OPEN_PROMPT.format(
-                domain=request.domain or DEFAULT_DOMAIN,
-                context=("\n" + "\n".join(lines) + "\n") if lines else "",
-                language="по-английски" if request.language == "en" else "по-русски",
-            )
+            return open_prompt(request, segment)
         if request.stage == "object":
             return OBJECT_PROMPT.format(
                 domain=request.domain or DEFAULT_DOMAIN,
