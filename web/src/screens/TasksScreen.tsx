@@ -16,6 +16,7 @@ const POLL_MS = 2000
 const PIPELINE_SHORT: Record<string, string> = {
   'learned-boundaries': 'детектор',
   'tsm-kernel': 'change-point',
+  manual: 'вручную',
 }
 
 type Filter = 'all' | 'running' | 'ready' | 'failed'

@@ -19,7 +19,7 @@ import numpy as np
 from praxis import config, errors, media, store
 from praxis.errors import UploadRejected
 from praxis.pipeline.base import Perception, get_segmenter
-from praxis.pipeline.naming import get_namer, merge_adjacent
+from praxis.pipeline.naming import NullNamer, get_namer, merge_adjacent
 from praxis.schema import Annotation, Provenance, VideoMeta
 from praxis.vocab import load_vocabulary
 
@@ -283,7 +283,9 @@ def annotate_clip(
 
     # Границы уже стоят — языковая модель только называет то, что нарезано.
     at_name = time.perf_counter()
-    namer = get_namer()
+    # Нечего называть — не зовём модель: пустая дорожка ручной разметки не должна
+    # ждать проверку доступности сервиса и не должна получать её предупреждения.
+    namer = get_namer() if result.steps else NullNamer()
     named = namer.name_steps(source, meta, result.steps, vocabulary, perception.crop)
     name_sec = time.perf_counter() - at_name
 

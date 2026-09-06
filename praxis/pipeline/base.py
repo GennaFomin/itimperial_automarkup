@@ -64,6 +64,10 @@ def get_segmenter(name: str, threshold: float | None = None) -> Segmenter:
         from praxis.pipeline.stub import StubSegmenter
 
         return StubSegmenter()
+    if name == "manual":
+        from praxis.pipeline.manual import ManualSegmenter
+
+        return ManualSegmenter()
     if name == "motion-dp":
         from praxis.pipeline.physical import PhysicalSegmenter
 

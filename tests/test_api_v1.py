@@ -694,7 +694,7 @@ def test_job_options_are_validated(client, clips):
 
 def test_limits_list_the_pipelines_and_defaults(client):
     limits = client.get("/api/v1/limits").json()
-    assert {p["id"] for p in limits["pipelines"]} == {"learned-boundaries", "tsm-kernel"}
+    assert {p["id"] for p in limits["pipelines"]} == {"learned-boundaries", "tsm-kernel", "manual"}
     assert limits["pipeline_default"] == config.PIPELINE
     assert 0 < limits["tas_threshold_default"] < 1
 
@@ -787,3 +787,21 @@ def test_media_serves_a_light_faststart_copy_and_caches_forever(client, clips):
     assert int(original.headers["content-length"]) == source.stat().st_size
     frame = client.get(f"/api/v1/jobs/{job_id}/frame?ms=500")
     assert "immutable" in frame.headers["cache-control"]
+
+
+def test_manual_pipeline_gives_an_empty_track_without_calling_models(client, clips, monkeypatch):
+    """Загрузка «без авторазметки»: видео готово к редактору, шагов нет, сервисы не трогались."""
+    monkeypatch.setattr(config, "VLM_BASE_URL", "http://127.0.0.1:1")  # недоступен — и не нужен
+    with clips["ok"].open("rb") as handle:
+        response = client.post(
+            "/api/v1/jobs", files={"file": ("ok.mp4", handle, "video/mp4")}, data={"pipeline": "manual"}
+        )
+    assert response.status_code == 202, response.text
+    job_id = response.json()["job_id"]
+    job = wait_done(client, job_id)
+    assert job["status"] == "done", job
+    assert job["warnings"] == []
+    prediction = client.get(f"/api/v1/jobs/{job_id}/prediction").json()
+    assert prediction["segments"] == []
+    assert prediction["model_version"].startswith("manual")
+    assert client.get(f"/api/v1/jobs/{job_id}/media").status_code == 200

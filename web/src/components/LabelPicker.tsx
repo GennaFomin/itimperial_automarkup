@@ -9,7 +9,10 @@ interface Props {
   options: Option[]
   value: string
   onChange: (id: string) => void
-  /** Словарь открытый: Enter с текстом, которого нет в списке, всё равно принимается. */
+  /**
+   * Словарь открытый. Добавить своё значение можно всегда — контракт требует показывать
+   * его как есть; флаг лишь решает, помечать ли новое как «вне словаря».
+   */
   allowFree: boolean
   /** Что показать плашками под полем: самые частые значения в этом ролике. */
   frequent: string[]
@@ -71,6 +74,12 @@ export function LabelPicker({
       .filter(({ o }) => o.label_ru.toLowerCase().includes(query) || o.id.toLowerCase().includes(query))
   }, [options, query, current, value])
 
+  // Своего значения нет в списке — предлагаем его добавить последней строкой.
+  const canAdd =
+    query.length > 0 &&
+    !options.some((o) => o.label_ru.toLowerCase() === query || o.id.toLowerCase() === query)
+  const rows = matches.length + (canAdd ? 1 : 0)
+
   useEffect(() => setActive(0), [query])
   useEffect(() => {
     const row = listRef.current?.children[active] as HTMLElement | undefined
@@ -94,9 +103,9 @@ export function LabelPicker({
       e.preventDefault()
       e.stopPropagation()
       if (!open) setOpen(true)
-      if (matches.length === 0) return
+      if (rows === 0) return
       const step = e.key === 'ArrowDown' ? 1 : -1
-      setActive((i) => (i + step + matches.length) % matches.length)
+      setActive((i) => (i + step + rows) % rows)
       return
     }
     if (e.key === 'Enter') {
@@ -105,11 +114,12 @@ export function LabelPicker({
       const exact = options.find(
         (o) => o.label_ru.toLowerCase() === query || o.id.toLowerCase() === query,
       )
+      // Активная строка «＋ Добавить» идёт последней: Enter на ней принимает свой текст.
       const chosen = open && matches[active] ? matches[active].o : exact
       if (chosen) return commit(chosen.id)
       if (exact) return commit(exact.id)
       const free = text.trim()
-      if (allowFree && free) return commit(free)
+      if (free) return commit(free)
       return
     }
     if (e.key === 'Escape') {
@@ -156,11 +166,7 @@ export function LabelPicker({
         />
         {open && (
           <div className="lp__list" role="listbox" ref={listRef}>
-            {matches.length === 0 && (
-              <div className="lp__hint">
-                {allowFree ? 'Нет в словаре — Enter примет ваш текст' : 'Ничего не найдено'}
-              </div>
-            )}
+            {matches.length === 0 && !canAdd && <div className="lp__hint">Ничего не найдено</div>}
             {matches.map(({ o, index }, i) => {
               const color = colorOf(o)
               return (
@@ -182,6 +188,21 @@ export function LabelPicker({
                 </div>
               )
             })}
+            {canAdd && (
+              <div
+                role="option"
+                aria-selected={active === matches.length}
+                className={`lp__row lp__row--add${active === matches.length ? ' lp__row--active' : ''}`}
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  commit(text.trim())
+                }}
+                onMouseEnter={() => setActive(matches.length)}
+              >
+                <span className="lp__label">＋ Добавить «{text.trim()}»</span>
+                {!allowFree && <span className="lp__oov">вне словаря</span>}
+              </div>
+            )}
           </div>
         )}
       </div>

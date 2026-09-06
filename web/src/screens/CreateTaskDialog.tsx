@@ -105,7 +105,7 @@ export function CreateTaskDialog({ onClose, onCreated }: Props) {
     if (!title.trim()) setTitleValue(file.name.replace(/\.[^.]+$/, ''))
   }
 
-  async function submit() {
+  async function submit(mode: 'auto' | 'manual' = 'auto') {
     if (!picked) {
       setError('Загрузите видео.')
       return
@@ -113,11 +113,13 @@ export function CreateTaskDialog({ onClose, onCreated }: Props) {
     setBusy(true)
     setError(null)
     try {
+      // «Без авторазметки» — отдельная кнопка, а не пункт списка: на демо её ищут глазами.
+      const chosen = mode === 'manual' ? 'manual' : pipeline || null
       const options = {
         scenario,
         durationMs: picked.durationMs,
-        pipeline: pipeline || null,
-        tasThreshold: threshold ? Number(threshold) : null,
+        pipeline: chosen,
+        tasThreshold: chosen === 'manual' || !threshold ? null : Number(threshold),
       }
       // Сначала хэш: известный серверу ролик обходится без загрузки, а готовый
       // прогон с теми же настройками возвращается сразу. Иначе — обычная загрузка.
@@ -273,7 +275,7 @@ export function CreateTaskDialog({ onClose, onCreated }: Props) {
                 onChange={(e) => setPipeline(e.target.value)}
               >
                 <option value="">Как на сервере — {pipelineLabel(limits, limits.pipeline_default)}</option>
-                {limits.pipelines.map((p) => (
+                {limits.pipelines.filter((p) => p.id !== 'manual').map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.label}
                   </option>
@@ -331,7 +333,17 @@ export function CreateTaskDialog({ onClose, onCreated }: Props) {
             <button className="btn" onClick={onClose} disabled={busy}>
               Отмена
             </button>
-            <button className="btn btn--primary" onClick={submit} disabled={busy || !picked}>
+            {!USING_MOCK && (
+              <button
+                className="btn"
+                onClick={() => void submit('manual')}
+                disabled={busy || !picked}
+                title="Ролик попадёт в редактор с пустой дорожкой: границы и метки ставите вы"
+              >
+                Без авторазметки
+              </button>
+            )}
+            <button className="btn btn--primary" onClick={() => void submit()} disabled={busy || !picked}>
               {busy ? (stage ?? 'Загружаем…') : 'В очередь на разметку'}
             </button>
           </div>

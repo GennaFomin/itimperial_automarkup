@@ -151,6 +151,7 @@ def _progress(record: dict) -> float:
 PIPELINES = {
     "learned-boundaries": "Детектор границ: действия с паузами между ними",
     "tsm-kernel": "Ядровой change-point: ролик нарезан подряд, без пауз",
+    "manual": "Без авторазметки: пустая дорожка, шаги ставит человек",
 }
 
 
